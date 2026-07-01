@@ -1,0 +1,7 @@
+.DS_Store
+UserInterfaceState.xcuserstate
+*.xcuserstate
+xcuserdata/
+DerivedData/
+build/
+.xcworkspace/
