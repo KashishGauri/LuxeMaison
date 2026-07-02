@@ -20,6 +20,8 @@ struct SalesAssociateRootView: View {
     private let issueDashboard = IssueDashboard.sample
 
     @State private var appointments: [DBAppointment] = []
+    @State private var dynamicSalesGoal: SalesGoal? = nil
+    @State private var dynamicWeeklySales: WeeklySalesSummary? = nil
 
     /// Merges upcoming Supabase appointments into the dashboard's priority queue.
     private var customizedDashboard: SalesAssociateDashboard {
@@ -80,11 +82,11 @@ struct SalesAssociateRootView: View {
 
         return SalesAssociateDashboard(
             associate: loggedInDashboard.associate,
-            monthlyGoal: loggedInDashboard.monthlyGoal,
+            monthlyGoal: dynamicSalesGoal ?? loggedInDashboard.monthlyGoal,
             priorityItems: combinedPriorities,
             quickActions: loggedInDashboard.quickActions,
             metrics: loggedInDashboard.metrics,
-            weeklySales: loggedInDashboard.weeklySales
+            weeklySales: dynamicWeeklySales ?? loggedInDashboard.weeklySales
         )
     }
 
@@ -114,7 +116,79 @@ struct SalesAssociateRootView: View {
             .task {
                 await syncProfilesWithSupabase()
                 await loadAppointments()
+                await loadSalesAndGoal()
             }
+        }
+    }
+
+    private func loadSalesAndGoal() async {
+        let associateID = loggedInDashboard.associate.id
+        do {
+            if !associateID.hasSuffix("-id") {
+                let sales = try await SupabaseDBService.shared.fetchSales(for: associateID)
+                let target = try await SupabaseDBService.shared.fetchAssociateSalesTarget(for: associateID)
+                
+                let achievedSum = sales.reduce(0.0) { $0 + $1.totalAmount }
+                let achievedStr = achievedSum >= 100000.0 ? String(format: "Rs. %.1fL", achievedSum / 100000.0) : String(format: "Rs. %.0f", achievedSum)
+                
+                let targetSum = target?.targetAmount ?? 500000.0
+                let targetStr = targetSum >= 100000.0 ? String(format: "Rs. %.1fL", targetSum / 100000.0) : String(format: "Rs. %.0f", targetSum)
+                
+                let goalProgress = targetSum > 0 ? min(1.0, achievedSum / targetSum) : 0.0
+                
+                let salesGoal = SalesGoal(
+                    title: "Monthly Sales Goal",
+                    progress: goalProgress,
+                    achieved: achievedStr,
+                    target: targetStr
+                )
+                
+                let weeklySalesSummary = SupabaseDBService.shared.calculateWeeklySalesSummary(sales: sales)
+                
+                await MainActor.run {
+                    self.dynamicSalesGoal = salesGoal
+                    self.dynamicWeeklySales = weeklySalesSummary
+                }
+            } else {
+                let achievedSum = 100000.0
+                let targetSum = 500000.0
+                let goalProgress = achievedSum / targetSum
+                
+                let salesGoal = SalesGoal(
+                    title: "Monthly Sales Goal",
+                    progress: goalProgress,
+                    achieved: "Rs. 1.0L",
+                    target: "Rs. 5.0L"
+                )
+                
+                let mockDays = [
+                    DailySales(day: "Mon", amount: "10k", progress: 0.25, isBest: false),
+                    DailySales(day: "Tue", amount: "15k", progress: 0.38, isBest: false),
+                    DailySales(day: "Wed", amount: "8k", progress: 0.20, isBest: false),
+                    DailySales(day: "Thu", amount: "40k", progress: 1.00, isBest: true),
+                    DailySales(day: "Fri", amount: "12k", progress: 0.30, isBest: false),
+                    DailySales(day: "Sat", amount: "10k", progress: 0.25, isBest: false),
+                    DailySales(day: "Sun", amount: "5k", progress: 0.12, isBest: false)
+                ]
+                
+                let weeklySalesSummary = WeeklySalesSummary(
+                    total: "Rs. 1.0L",
+                    change: "+12%",
+                    comparison: "vs last week",
+                    bestDay: "Thu",
+                    bestDayLabel: "Best sales day",
+                    days: mockDays
+                )
+                
+                await MainActor.run {
+                    self.dynamicSalesGoal = salesGoal
+                    self.dynamicWeeklySales = weeklySalesSummary
+                }
+            }
+        } catch {
+            #if DEBUG
+            print("Failed to fetch sales target / weekly sales: \(error)")
+            #endif
         }
     }
 

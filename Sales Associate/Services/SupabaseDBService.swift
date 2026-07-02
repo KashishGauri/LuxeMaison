@@ -379,6 +379,119 @@ class SupabaseDBService {
         }
     }
 
+    /// Fetches all sales for a particular associate.
+    func fetchSales(for associateID: String) async throws -> [DBSale] {
+        guard let url = URL(string: "\(baseURL)/Sales?salesAssociateID=eq.\(associateID)&select=*") else {
+            throw URLError(.badURL)
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+        
+        return try JSONDecoder().decode([DBSale].self, from: data)
+    }
+    
+    /// Fetches the sales target for a particular associate.
+    func fetchAssociateSalesTarget(for associateID: String) async throws -> DBAssociateSalesTarget? {
+        guard let url = URL(string: "\(baseURL)/AssociateSalesTarget?assignedToID=eq.\(associateID)&select=*") else {
+            throw URLError(.badURL)
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+        
+        let targets = try JSONDecoder().decode([DBAssociateSalesTarget].self, from: data)
+        return targets.first
+    }
+    
+    /// Calculates the weekly sales summary and weekday bars from associate sales.
+    func calculateWeeklySalesSummary(sales: [DBSale]) -> WeeklySalesSummary {
+        let daysOfWeek = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        var dailyTotals: [String: Double] = [:]
+        for d in daysOfWeek {
+            dailyTotals[d] = 0.0
+        }
+        
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        
+        let calendar = Calendar.current
+        
+        for sale in sales {
+            if let date = formatter.date(from: sale.salesDate) {
+                let weekday = calendar.component(.weekday, from: date)
+                let dayName: String
+                switch weekday {
+                case 1: dayName = "Sun"
+                case 2: dayName = "Mon"
+                case 3: dayName = "Tue"
+                case 4: dayName = "Wed"
+                case 5: dayName = "Thu"
+                case 6: dayName = "Fri"
+                case 7: dayName = "Sat"
+                default: dayName = "Mon"
+                }
+                dailyTotals[dayName, default: 0.0] += sale.totalAmount
+            }
+        }
+        
+        let totalSum = sales.reduce(0.0) { $0 + $1.totalAmount }
+        let totalStr = totalSum >= 100000.0 ? String(format: "Rs. %.1fL", totalSum / 100000.0) : String(format: "Rs. %.0f", totalSum)
+        
+        var bestDayName = "Mon"
+        var maxAmount = 0.0
+        for (day, amt) in dailyTotals {
+            if amt > maxAmount {
+                maxAmount = amt
+                bestDayName = day
+            }
+        }
+        
+        var dailySalesList: [DailySales] = []
+        for d in daysOfWeek {
+            let amt = dailyTotals[d] ?? 0.0
+            let amtStr: String
+            if amt >= 100000.0 {
+                amtStr = String(format: "%.1fL", amt / 100000.0)
+            } else if amt >= 1000.0 {
+                amtStr = String(format: "%.0fk", amt / 1000.0)
+            } else {
+                amtStr = String(format: "%.0f", amt)
+            }
+            
+            let progress = maxAmount > 0 ? (amt / maxAmount) : 0.0
+            dailySalesList.append(DailySales(
+                day: d,
+                amount: amtStr,
+                progress: progress,
+                isBest: d == bestDayName && maxAmount > 0
+            ))
+        }
+        
+        return WeeklySalesSummary(
+            total: totalStr,
+            change: "+15%",
+            comparison: "vs last week",
+            bestDay: bestDayName,
+            bestDayLabel: "Best sales day",
+            days: dailySalesList
+        )
+    }
+
     /// Resets the user's password in Supabase Auth using the access token.
     func updatePassword(email: String, newPassword: String, accessToken: String) async throws {
         guard let url = URL(string: "https://zfengirsvsjikrhxrfit.supabase.co/auth/v1/user") else {
@@ -555,5 +668,38 @@ struct DBDailyTask: Codable, Identifiable {
     let date: String
     let title: String
     var isCompleted: Bool
+}
+
+struct DBAssociateSalesTarget: Codable {
+    let id: String
+    let storeID: String
+    let assignedToID: String
+    let periodStartDate: String
+    let periodEndDate: String
+    let targetAmount: Double
+}
+
+struct DBSale: Codable {
+    let id: String
+    let customerID: String
+    let salesAssociateID: String?
+    let storeID: String
+    let salesDate: String
+    let currency: String
+    let preTaxAmount: Double
+    let taxAmount: Double
+    let totalAmount: Double
+    
+    enum CodingKeys: String, CodingKey {
+        case id
+        case customerID
+        case salesAssociateID
+        case storeID
+        case salesDate
+        case currency = "Currency"
+        case preTaxAmount
+        case taxAmount
+        case totalAmount
+    }
 }
 
