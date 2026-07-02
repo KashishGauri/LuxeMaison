@@ -163,7 +163,12 @@ class SupabaseDBService {
 
         switch httpResponse.statusCode {
         case 200:
-            // Credentials verified by Supabase — load the associate's profile row.
+            // Credentials verified by Supabase — extract access token and load the associate's profile row.
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let accessToken = json["access_token"] as? String {
+                UserDefaults.standard.set(accessToken, forKey: "supabase_access_token_\(cleanEmail)")
+                UserDefaults.standard.set(accessToken, forKey: "active_session_access_token")
+            }
             guard let dbUser = try await fetchUserProfile(email: cleanEmail) else {
                 throw AuthError.notInRecords
             }
@@ -176,9 +181,9 @@ class SupabaseDBService {
         }
     }
 
-    /// Fetches all appointments from the Supabase database.
-    func fetchAppointments() async throws -> [DBAppointment] {
-        guard let url = URL(string: "\(baseURL)/Appointment?select=*") else {
+    /// Fetches appointments for a specific sales associate ID from the Supabase database.
+    func fetchAppointments(for salesAssociateID: String) async throws -> [DBAppointment] {
+        guard let url = URL(string: "\(baseURL)/Appointment?salesAssociateID=eq.\(salesAssociateID)&select=*") else {
             throw URLError(.badURL)
         }
         
@@ -199,6 +204,205 @@ class SupabaseDBService {
         
         return try JSONDecoder().decode([DBAppointment].self, from: data)
     }
+
+    /// Fetches shifts for a specific user ID from the Supabase database.
+    func fetchShifts(for userID: String) async throws -> [DBShift] {
+        guard let url = URL(string: "\(baseURL)/Shift?userID=eq.\(userID)&select=*") else {
+            throw URLError(.badURL)
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+        return try JSONDecoder().decode([DBShift].self, from: data)
+    }
+
+    /// Fetches daily tasks for a specific user ID from the Supabase database.
+    func fetchDailyTasks(for userID: String) async throws -> [DBDailyTask] {
+        guard let url = URL(string: "\(baseURL)/DailyTask?userID=eq.\(userID)&select=*") else {
+            throw URLError(.badURL)
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+        return try JSONDecoder().decode([DBDailyTask].self, from: data)
+    }
+
+    /// Updates the user's isActive status in the User table in Supabase.
+    func updateUserActiveStatus(userId: String, isActive: Bool) async {
+        let token = UserDefaults.standard.string(forKey: "active_session_access_token") ?? anonKey
+        
+        // 1. Try calling the RPC function first
+        if let rpcURL = URL(string: "\(baseURL)/rpc/update_user_active_status") {
+            var request = URLRequest(url: rpcURL)
+            request.httpMethod = "POST"
+            request.setValue(anonKey, forHTTPHeaderField: "apikey")
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            
+            let body: [String: Any] = [
+                "user_id": userId,
+                "is_active": isActive
+            ]
+            
+            do {
+                request.httpBody = try JSONSerialization.data(withJSONObject: body)
+                let (_, response) = try await URLSession.shared.data(for: request)
+                if let httpResponse = response as? HTTPURLResponse {
+                    print("isActive status update via RPC response: \(httpResponse.statusCode)")
+                    if httpResponse.statusCode == 200 || httpResponse.statusCode == 204 {
+                        return // Success!
+                    }
+                }
+            } catch {
+                print("Failed to update user active status via RPC: \(error)")
+            }
+        }
+        
+        // 2. Fallback to direct PATCH if the RPC fails or doesn't exist
+        guard let url = URL(string: "\(baseURL)/User?id=eq.\(userId)") else {
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "PATCH"
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let body = ["isActive": isActive]
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: body)
+            request.httpBody = jsonData
+            
+            let (_, response) = try await URLSession.shared.data(for: request)
+            if let httpResponse = response as? HTTPURLResponse {
+                print("isActive status update via PATCH response: \(httpResponse.statusCode)")
+            }
+        } catch {
+            print("Failed to update user isActive status in DB: \(error)")
+        }
+    }
+
+    /// Updates a daily task's completion status in Supabase.
+    func updateDailyTaskStatus(taskId: String, isCompleted: Bool) async {
+        guard let url = URL(string: "\(baseURL)/DailyTask?id=eq.\(taskId)") else {
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "PATCH"
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        
+        let token = UserDefaults.standard.string(forKey: "active_session_access_token") ?? anonKey
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let body = ["isCompleted": isCompleted]
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: body)
+            request.httpBody = jsonData
+            
+            let (_, response) = try await URLSession.shared.data(for: request)
+            if let httpResponse = response as? HTTPURLResponse {
+                print("DailyTask status update response status: \(httpResponse.statusCode)")
+            }
+        } catch {
+            print("Failed to update daily task status in DB: \(error)")
+        }
+    }
+
+    /// Updates an appointment's status in Supabase.
+    func updateAppointmentStatus(appointmentId: String, status: String) async {
+        let token = UserDefaults.standard.string(forKey: "active_session_access_token") ?? anonKey
+        
+        // 1. Try calling the RPC function first
+        if let rpcURL = URL(string: "\(baseURL)/rpc/update_appointment_status") {
+            var request = URLRequest(url: rpcURL)
+            request.httpMethod = "POST"
+            request.setValue(anonKey, forHTTPHeaderField: "apikey")
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            
+            let body: [String: Any] = [
+                "appointment_id": appointmentId,
+                "new_status": status
+            ]
+            
+            do {
+                request.httpBody = try JSONSerialization.data(withJSONObject: body)
+                let (_, response) = try await URLSession.shared.data(for: request)
+                if let httpResponse = response as? HTTPURLResponse {
+                    print("Appointment status update via RPC response: \(httpResponse.statusCode)")
+                    if httpResponse.statusCode == 200 || httpResponse.statusCode == 204 {
+                        return // Success!
+                    }
+                }
+            } catch {
+                print("Failed to update appointment status via RPC: \(error)")
+            }
+        }
+        
+        // 2. Fallback to direct PATCH
+        guard let url = URL(string: "\(baseURL)/Appointment?id=eq.\(appointmentId)") else {
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "PATCH"
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let body = ["status": status]
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: body)
+            request.httpBody = jsonData
+            
+            let (_, response) = try await URLSession.shared.data(for: request)
+            if let httpResponse = response as? HTTPURLResponse {
+                print("Appointment status update via PATCH response: \(httpResponse.statusCode)")
+            }
+        } catch {
+            print("Failed to update appointment status via PATCH: \(error)")
+        }
+    }
+
+    /// Resets the user's password in Supabase Auth using the access token.
+    func updatePassword(email: String, newPassword: String, accessToken: String) async throws {
+        guard let url = URL(string: "https://zfengirsvsjikrhxrfit.supabase.co/auth/v1/user") else {
+            throw URLError(.badURL)
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let body = ["password": newPassword]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+        
+        guard httpResponse.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+    }
 }
 
 struct DBAppointment: Codable, Identifiable {
@@ -208,7 +412,7 @@ struct DBAppointment: Codable, Identifiable {
     let salesAssociateID: String?
     let date: String
     let type: String
-    let status: String
+    var status: String
     let preferences: String?
     let createdAt: String
     
@@ -336,5 +540,20 @@ struct DBUser: Codable {
         case phoneNumber = "Phone Number"
         case userRole = "User Role"
     }
+}
+
+struct DBShift: Codable, Identifiable {
+    let id: String
+    let userID: String
+    let storeID: String
+    let shiftType: String
+}
+
+struct DBDailyTask: Codable, Identifiable {
+    let id: String
+    let userID: String
+    let date: String
+    let title: String
+    var isCompleted: Bool
 }
 

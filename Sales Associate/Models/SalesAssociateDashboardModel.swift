@@ -10,6 +10,7 @@ struct SalesAssociateDashboard {
 }
 
 struct AssociateProfile {
+    let id: String
     let initials: String
     let name: String
     let role: String

@@ -120,7 +120,7 @@ struct SalesAssociateRootView: View {
 
     private func loadAppointments() async {
         do {
-            let fetched = try await SupabaseDBService.shared.fetchAppointments()
+            let fetched = try await SupabaseDBService.shared.fetchAppointments(for: loggedInDashboard.associate.id)
             await MainActor.run {
                 self.appointments = fetched.sorted { $0.date < $1.date }
                 NotificationManager.shared.scheduleAppointmentNotifications(appointments: fetched, clientProfiles: clientProfiles)
@@ -219,7 +219,7 @@ struct TodayDashboardView: View {
                 AssociateProfileSheet(associate: dashboard.associate, onLogout: onLogout)
             }
             .sheet(isPresented: $isAppointmentsSheetPresented) {
-                AppointmentsSheet(clientProfiles: clientProfiles)
+                AppointmentsSheet(associateID: dashboard.associate.id, clientProfiles: clientProfiles)
             }
             .sheet(isPresented: $isNotificationsSheetPresented) {
                 NotificationsSheet(appointments: appointments, clientProfiles: clientProfiles)
@@ -582,42 +582,20 @@ private struct SidebarAssociateProfileButton: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
+        HStack {
+            Spacer()
+            Button(action: action) {
                 Text(associate.initials)
                     .font(.headline.weight(.black))
                     .foregroundStyle(.white)
-                    .frame(width: 46, height: 46)
-                    .background(Theme.goldGradient, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(associate.name)
-                        .font(.headline.weight(.black))
-                        .foregroundStyle(Theme.ink)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.72)
-                    Text(associate.role)
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(Theme.muted)
-                        .lineLimit(1)
-                    Text(associate.boutique)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(Theme.muted.opacity(0.85))
-                        .lineLimit(1)
-                }
-
-                Spacer(minLength: 0)
+                    .frame(width: 48, height: 48)
+                    .background(Theme.goldGradient, in: Circle())
+                    .shadow(color: Theme.gold.opacity(0.15), radius: 6, x: 0, y: 3)
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, minHeight: 76, alignment: .leading)
-            .background(.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .stroke(Theme.line.opacity(0.62), lineWidth: 1)
-            )
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open sales associate profile")
+            Spacer()
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Open sales associate profile")
     }
 }
 
@@ -626,76 +604,210 @@ private struct AssociateProfileSheet: View {
     let onLogout: () -> Void
     @Environment(\.dismiss) private var dismiss
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            HStack(alignment: .top, spacing: 14) {
-                Text(associate.initials)
-                    .font(.title.weight(.black))
-                    .foregroundStyle(.white)
-                    .frame(width: 68, height: 68)
-                    .background(Theme.goldGradient, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    @State private var shifts: [DBShift] = []
+    @State private var dailyTasks: [DBDailyTask] = []
+    @State private var isLoading = false
 
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(associate.name)
-                        .font(.title2.weight(.black))
-                        .foregroundStyle(Theme.ink)
-                    Text(associate.role)
-                        .font(.headline.weight(.semibold))
-                        .foregroundStyle(Theme.muted)
-                    Text(associate.boutique)
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(Theme.gold)
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                HStack(alignment: .top, spacing: 14) {
+                    Text(associate.initials)
+                        .font(.title.weight(.black))
+                        .foregroundStyle(.white)
+                        .frame(width: 68, height: 68)
+                        .background(Theme.goldGradient, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(associate.name)
+                            .font(.title2.weight(.black))
+                            .foregroundStyle(Theme.ink)
+                        Text(associate.role)
+                            .font(.headline.weight(.semibold))
+                            .foregroundStyle(Theme.muted)
+                        Text(associate.boutique)
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(Theme.gold)
+                    }
+
+                    Spacer()
+
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.headline.weight(.black))
+                            .foregroundStyle(Theme.muted)
+                            .frame(width: 42, height: 42)
+                            .background(.white.opacity(0.74), in: Circle())
+                    }
+                    .buttonStyle(.plain)
                 }
 
-                Spacer()
+                VStack(spacing: 12) {
+                    AssociateProfileInfoRow(title: "Email", value: associate.email, icon: "envelope")
+                    AssociateProfileInfoRow(title: "Phone", value: associate.phone, icon: "phone")
+                    AssociateProfileInfoRow(title: "Employee ID", value: associate.employeeID, icon: "person.text.rectangle")
+                }
+
+                if isLoading {
+                    HStack {
+                        Spacer()
+                        ProgressView()
+                            .tint(Theme.gold)
+                        Spacer()
+                    }
+                    .padding(.vertical, 10)
+                } else {
+                    if !shifts.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("ASSIGNED SHIFTS")
+                                .font(.caption.weight(.black))
+                                .tracking(1.1)
+                                .foregroundStyle(Theme.muted)
+
+                            ForEach(shifts) { shift in
+                                HStack(spacing: 12) {
+                                    Image(systemName: "calendar.badge.clock")
+                                        .font(.headline.weight(.black))
+                                        .foregroundStyle(Theme.gold)
+                                        .frame(width: 44, height: 44)
+                                        .background(Theme.selected, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text("SHIFT TYPE")
+                                            .font(.caption.weight(.black))
+                                            .tracking(1.1)
+                                            .foregroundStyle(Theme.muted)
+                                        Text(shift.shiftType.uppercased())
+                                            .font(.headline.weight(.bold))
+                                            .foregroundStyle(Theme.ink)
+                                    }
+                                    Spacer()
+                                }
+                                .padding(14)
+                                .background(.white.opacity(0.62), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                        .stroke(Theme.line.opacity(0.45), lineWidth: 1)
+                                )
+                            }
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("DAILY TASKS")
+                            .font(.caption.weight(.black))
+                            .tracking(1.1)
+                            .foregroundStyle(Theme.muted)
+
+                        if dailyTasks.isEmpty {
+                            Text("No daily tasks assigned for today.")
+                                .font(.subheadline)
+                                .foregroundStyle(Theme.muted)
+                                .padding()
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(.white.opacity(0.42), in: RoundedRectangle(cornerRadius: 15))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 15)
+                                        .stroke(Theme.line.opacity(0.3), lineWidth: 1)
+                                )
+                        } else {
+                            VStack(spacing: 12) {
+                                ForEach(dailyTasks.indices, id: \.self) { index in
+                                    Button {
+                                        dailyTasks[index].isCompleted.toggle()
+                                        if !associate.id.hasSuffix("-id") {
+                                            let task = dailyTasks[index]
+                                            Task {
+                                                await SupabaseDBService.shared.updateDailyTaskStatus(taskId: task.id, isCompleted: task.isCompleted)
+                                            }
+                                        }
+                                    } label: {
+                                        HStack(spacing: 12) {
+                                            Image(systemName: dailyTasks[index].isCompleted ? "checkmark.circle.fill" : "circle")
+                                                .font(.headline.weight(.black))
+                                                .foregroundStyle(dailyTasks[index].isCompleted ? .green : Theme.gold)
+                                                .frame(width: 44, height: 44)
+                                                .background(Theme.selected, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+
+                                            VStack(alignment: .leading, spacing: 3) {
+                                                Text(dailyTasks[index].date)
+                                                    .font(.caption.weight(.black))
+                                                    .tracking(1.1)
+                                                    .foregroundStyle(Theme.muted)
+                                                Text(dailyTasks[index].title)
+                                                    .font(.headline.weight(.bold))
+                                                    .foregroundStyle(Theme.ink)
+                                                    .multilineTextAlignment(.leading)
+                                            }
+                                            Spacer()
+                                        }
+                                    }
+                                    .buttonStyle(.plain)
+                                    .padding(14)
+                                    .background(.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                            .stroke(Theme.line.opacity(0.4), lineWidth: 1)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(minLength: 16)
 
                 Button {
                     dismiss()
+                    onLogout()
                 } label: {
-                    Image(systemName: "xmark")
-                        .font(.headline.weight(.black))
-                        .foregroundStyle(Theme.muted)
-                        .frame(width: 42, height: 42)
-                        .background(.white.opacity(0.74), in: Circle())
+                    HStack(spacing: 8) {
+                        Image(systemName: "power")
+                            .font(.headline.weight(.black))
+                        Text("LOG OUT")
+                            .font(.headline.weight(.black))
+                            .tracking(1.2)
+                    }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, minHeight: 52)
+                    .background(
+                        LinearGradient(
+                            colors: [Color(red: 0.48, green: 0.14, blue: 0.14), Color(red: 0.68, green: 0.22, blue: 0.22)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        ),
+                        in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    )
                 }
                 .buttonStyle(.plain)
             }
-
-            VStack(spacing: 12) {
-                AssociateProfileInfoRow(title: "Email", value: associate.email, icon: "envelope")
-                AssociateProfileInfoRow(title: "Phone", value: associate.phone, icon: "phone")
-                AssociateProfileInfoRow(title: "Employee ID", value: associate.employeeID, icon: "person.text.rectangle")
-            }
-
-            Spacer(minLength: 16)
-
-            Button {
-                dismiss()
-                onLogout()
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "power")
-                        .font(.headline.weight(.black))
-                    Text("LOG OUT")
-                        .font(.headline.weight(.black))
-                        .tracking(1.2)
-                }
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity, minHeight: 52)
-                .background(
-                    LinearGradient(
-                        colors: [Color(red: 0.48, green: 0.14, blue: 0.14), Color(red: 0.68, green: 0.22, blue: 0.22)],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    ),
-                    in: RoundedRectangle(cornerRadius: 18, style: .continuous)
-                )
-            }
-            .buttonStyle(.plain)
+            .padding(26)
         }
-        .padding(26)
-        .frame(minWidth: 420, minHeight: 420)
+        .frame(minWidth: 420, minHeight: 480)
         .background(Theme.background)
+        .task {
+            isLoading = true
+            do {
+                if associate.id.hasSuffix("-id") {
+                    shifts = [DBShift(id: "mock-shift-1", userID: associate.id, storeID: "mock-store", shiftType: associate.shift)]
+                    dailyTasks = [
+                        DBDailyTask(id: "mock-task-1", userID: associate.id, date: "2026-07-02", title: "Verify boutique planogram guidelines", isCompleted: true),
+                        DBDailyTask(id: "mock-task-2", userID: associate.id, date: "2026-07-02", title: "Welcome premium VIP clients", isCompleted: false),
+                        DBDailyTask(id: "mock-task-3", userID: associate.id, date: "2026-07-02", title: "Complete shift checklist handover", isCompleted: false)
+                    ]
+                } else {
+                    shifts = try await SupabaseDBService.shared.fetchShifts(for: associate.id)
+                    dailyTasks = try await SupabaseDBService.shared.fetchDailyTasks(for: associate.id)
+                }
+            } catch {
+                #if DEBUG
+                print("Failed to fetch shifts/tasks: \(error)")
+                #endif
+            }
+            isLoading = false
+        }
     }
 }
 
@@ -738,6 +850,7 @@ private struct AssociateProfileInfoRow: View {
 
 
 struct AppointmentsSheet: View {
+    let associateID: String
     let clientProfiles: [ClientProfile]
     @Environment(\.dismiss) private var dismiss
 
@@ -789,10 +902,21 @@ struct AppointmentsSheet: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 14) {
-                            ForEach(appointments) { appointment in
+                            ForEach(appointments.indices, id: \.self) { index in
                                 AppointmentRow(
-                                    appointment: appointment,
-                                    clientProfile: findClientProfile(for: appointment.customerID)
+                                    appointment: appointments[index],
+                                    clientProfile: findClientProfile(for: appointments[index].customerID),
+                                    onToggleStatus: {
+                                        let currentStatus = appointments[index].status
+                                        let newStatus = currentStatus == "completed" ? "scheduled" : "completed"
+                                        
+                                        appointments[index].status = newStatus
+                                        
+                                        let appointmentId = appointments[index].id
+                                        Task {
+                                            await SupabaseDBService.shared.updateAppointmentStatus(appointmentId: appointmentId, status: newStatus)
+                                        }
+                                    }
                                 )
                             }
                         }
@@ -828,7 +952,7 @@ struct AppointmentsSheet: View {
         isLoading = true
         errorMessage = nil
         do {
-            let fetched = try await SupabaseDBService.shared.fetchAppointments()
+            let fetched = try await SupabaseDBService.shared.fetchAppointments(for: associateID)
             await MainActor.run {
                 self.appointments = fetched.sorted { $0.date < $1.date }
                 self.isLoading = false
@@ -845,9 +969,20 @@ struct AppointmentsSheet: View {
 struct AppointmentRow: View {
     let appointment: DBAppointment
     let clientProfile: ClientProfile?
+    let onToggleStatus: () -> Void
 
     var body: some View {
         HStack(spacing: 16) {
+            Button(action: onToggleStatus) {
+                Image(systemName: appointment.status == "completed" ? "checkmark.circle.fill" : "circle")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(appointment.status == "completed" ? .green : Theme.gold)
+                    .frame(width: 44, height: 44)
+                    .background(Theme.selected, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Toggle appointment completion status")
+
             VStack(alignment: .leading, spacing: 6) {
                 // Name
                 Text(clientProfile?.name ?? appointment.customerID)

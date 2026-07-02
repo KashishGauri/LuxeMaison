@@ -276,10 +276,9 @@ struct LoginView: View {
         }
         // Password Reset sheet presented for first-time login
         .sheet(isPresented: $isShowingResetSheet) {
-            PasswordResetSheet(email: pendingEmail) { newPassword in
-                // Save new password in UserDefaults and mark password reset as complete
-                let cleanEmail = pendingEmail.lowercased()
-                UserDefaults.standard.set(newPassword, forKey: "user_password_\(cleanEmail)")
+            let cleanEmail = pendingEmail.lowercased()
+            let token = UserDefaults.standard.string(forKey: "supabase_access_token_\(cleanEmail)")
+            PasswordResetSheet(email: pendingEmail, accessToken: token) {
                 UserDefaults.standard.set(true, forKey: "password_reset_\(cleanEmail)")
                 
                 if let dashboard = pendingDashboard {
@@ -377,8 +376,9 @@ struct LoginView: View {
             do {
                 let dbUser = try await SupabaseDBService.shared.signIn(email: cleanEmail, password: enteredPassword)
                 await MainActor.run {
-                    // Password already verified by Supabase — sign in directly.
-                    performLoginSuccess(with: SalesAssociateDashboard.createDynamic(from: dbUser))
+                    // Password already verified by Supabase — check for first-time password reset.
+                    let dashboard = SalesAssociateDashboard.createDynamic(from: dbUser)
+                    processLogin(with: dashboard)
                 }
             } catch let error as AuthError {
                 await MainActor.run {
@@ -408,6 +408,11 @@ struct LoginView: View {
             UserDefaults.standard.removeObject(forKey: "is_logged_in")
         }
         
+        let userId = dashboard.associate.id
+        Task {
+            await SupabaseDBService.shared.updateUserActiveStatus(userId: userId, isActive: true)
+        }
+        
         withAnimation(.spring(response: 0.45, dampingFraction: 0.78)) {
             self.loggedInDashboard = dashboard
             self.isLoading = false
@@ -418,12 +423,14 @@ struct LoginView: View {
 // Beautiful sheet prompting user to reset their password on first login
 struct PasswordResetSheet: View {
     let email: String
-    let onCompletion: (String) -> Void
+    let accessToken: String?
+    let onCompletion: () -> Void
     @Environment(\.dismiss) private var dismiss
     
     @State private var newPassword: String = ""
     @State private var confirmPassword: String = ""
     @State private var errorMessage: String? = nil
+    @State private var isLoading: Bool = false
     
     var body: some View {
         NavigationStack {
@@ -497,15 +504,24 @@ struct PasswordResetSheet: View {
                         
                         // Save & Sign In Button
                         Button(action: saveNewPassword) {
-                            Text("UPDATE PASSWORD & SIGN IN")
-                                .font(.system(size: 14, weight: .semibold))
-                                .tracking(2)
-                                .foregroundStyle(.white)
-                                .frame(maxWidth: .infinity, minHeight: 50)
-                                .background(Theme.goldGradient)
-                                .cornerRadius(12)
-                                .shadow(color: Theme.gold.opacity(0.2), radius: 8, x: 0, y: 4)
+                            ZStack {
+                                Theme.goldGradient
+                                
+                                if isLoading {
+                                    ProgressView()
+                                        .tint(.white)
+                                } else {
+                                    Text("UPDATE PASSWORD & SIGN IN")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .tracking(2)
+                                        .foregroundStyle(.white)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 50)
+                            .cornerRadius(12)
+                            .shadow(color: Theme.gold.opacity(0.2), radius: 8, x: 0, y: 4)
                         }
+                        .disabled(isLoading)
                         .padding(.top, 12)
                     }
                     .padding(28)
@@ -527,6 +543,7 @@ struct PasswordResetSheet: View {
                         dismiss()
                     }
                     .foregroundStyle(Theme.muted)
+                    .disabled(isLoading)
                 }
             }
         }
@@ -543,8 +560,31 @@ struct PasswordResetSheet: View {
             return
         }
         
-        onCompletion(newPassword)
-        dismiss()
+        let cleanEmail = email.lowercased()
+        if let token = accessToken {
+            isLoading = true
+            errorMessage = nil
+            Task {
+                do {
+                    try await SupabaseDBService.shared.updatePassword(email: cleanEmail, newPassword: newPassword, accessToken: token)
+                    await MainActor.run {
+                        isLoading = false
+                        UserDefaults.standard.set(newPassword, forKey: "user_password_\(cleanEmail)")
+                        onCompletion()
+                        dismiss()
+                    }
+                } catch {
+                    await MainActor.run {
+                        isLoading = false
+                        errorMessage = "Failed to update password: \(error.localizedDescription)"
+                    }
+                }
+            }
+        } else {
+            UserDefaults.standard.set(newPassword, forKey: "user_password_\(cleanEmail)")
+            onCompletion()
+            dismiss()
+        }
     }
 }
 
@@ -569,6 +609,7 @@ extension SalesAssociateDashboard {
         
         return SalesAssociateDashboard(
             associate: AssociateProfile(
+                id: dbUser.id,
                 initials: initials,
                 name: name,
                 role: dbUser.userRole ?? "Sales Associate",

@@ -19,6 +19,12 @@ struct Sales_AssociateApp: App {
                         onBack: {},
                         loggedInDashboard: dashboard,
                         onLogout: {
+                            let userId = dashboard.associate.id
+                            Task {
+                                await SupabaseDBService.shared.updateUserActiveStatus(userId: userId, isActive: false)
+                                UserDefaults.standard.removeObject(forKey: "active_session_access_token")
+                            }
+                            
                             // Clear login persistence state on logout
                             UserDefaults.standard.removeObject(forKey: "saved_associate_email")
                             UserDefaults.standard.set(false, forKey: "is_logged_in")

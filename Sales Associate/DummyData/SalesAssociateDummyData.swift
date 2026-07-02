@@ -1,6 +1,7 @@
 extension SalesAssociateDashboard {
     static let sample = SalesAssociateDashboard(
         associate: AssociateProfile(
+            id: "gauri-id",
             initials: "SA",
             name: "Gauri Sharma",
             role: "Sales Associate",
@@ -63,6 +64,7 @@ extension SalesAssociateDashboard {
         sample,
         SalesAssociateDashboard(
             associate: AssociateProfile(
+                id: "kabir-id",
                 initials: "KM",
                 name: "Kabir Malhotra",
                 role: "Senior Sales Associate",
@@ -122,6 +124,7 @@ extension SalesAssociateDashboard {
         ),
         SalesAssociateDashboard(
             associate: AssociateProfile(
+                id: "ananya-id",
                 initials: "AS",
                 name: "Ananya Sen",
                 role: "Boutique Ambassador",
