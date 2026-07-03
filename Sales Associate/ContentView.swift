@@ -10,7 +10,9 @@ struct SalesAssociateRootView: View {
     @State private var selectedTab: SalesAssociateTab = .today
     @State private var navigationMode: SalesNavigationMode = .sidebar
     @State private var recentlyViewedClients: [ClientProfile] = []
-    @State private var clientProfiles = ClientProfileJSONStore.loadProfiles()
+    // Client data is sourced only from Supabase (loaded in syncProfilesWithSupabase),
+    // never seeded from local/dummy files.
+    @State private var clientProfiles: [ClientProfile] = []
     @State private var sellingSession = SellingSessionState()
     // Loaded dynamically from Supabase database Product table.
     @State private var products: [SalesProduct] = []
@@ -280,23 +282,16 @@ struct SalesAssociateRootView: View {
     }
 
     private func syncProfilesWithSupabase() async {
-        print("Supabase Sync: Starting sync...")
+        print("Supabase Sync: Loading client profiles from Supabase...")
         do {
             let dbProfiles = try await SupabaseDBService.shared.fetchProfiles()
             print("Supabase Sync: Fetched \(dbProfiles.count) profiles from DB.")
-            if dbProfiles.isEmpty {
-                let localProfiles = ClientProfileJSONStore.loadProfiles()
-                print("Supabase Sync: DB is empty. Uploading \(localProfiles.count) local profiles for migration...")
-                if !localProfiles.isEmpty {
-                    try await SupabaseDBService.shared.uploadBatchProfiles(localProfiles)
-                    print("Supabase Sync: Migration successful!")
-                }
-            } else {
-                await MainActor.run {
-                    self.clientProfiles = dbProfiles
-                    ClientProfileJSONStore.saveProfiles(dbProfiles)
-                    print("Supabase Sync: Local state updated with DB profiles.")
-                }
+            // Client data is Supabase-only — always mirror the DB (even when empty),
+            // and never upload local/dummy profiles to seed it.
+            await MainActor.run {
+                self.clientProfiles = dbProfiles
+                ClientProfileJSONStore.saveProfiles(dbProfiles)
+                print("Supabase Sync: Client profiles loaded from Supabase.")
             }
         } catch {
             print("Supabase Sync ERROR: \(error)")
