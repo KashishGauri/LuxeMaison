@@ -670,21 +670,36 @@ struct PartiallyPaidView: View {
 
 struct CompletingView: View {
     @ObservedObject var model: PaymentFlowModel
+    @State private var showManualContinue = false
 
     var body: some View {
-        PaymentStatusCard(
-            tone: .info,
-            title: "Payment received — completing your order",
-            message: "Securing stock, generating the invoice and updating loyalty. A second charge is blocked while this finishes.",
-            isBusy: true
-        )
-        // Reliability backstop: the model also schedules this transition, but that
-        // internal timer can be orphaned when the Razorpay Safari cover tears down
-        // at hand-off — which left the flow stuck here. Driving it from the view's
-        // lifecycle guarantees the order always reaches its receipt.
-        .task {
-            try? await Task.sleep(nanoseconds: 2_600_000_000)
-            model.completeFinalizationIfNeeded()
+        VStack(spacing: 16) {
+            PaymentStatusCard(
+                tone: .info,
+                title: "Payment received — completing your order",
+                message: "Securing stock, generating the invoice and updating loyalty. A second charge is blocked while this finishes.",
+                isBusy: true
+            )
+
+            // Safety net: money is already collected, so the associate must never be
+            // trapped here. If auto-advance hasn't fired within a few seconds, offer
+            // a manual button to reach the receipt.
+            if showManualContinue {
+                PaymentPrimaryButton(title: "Continue to receipt", systemImage: "arrow.right") {
+                    model.completeFinalizationIfNeeded()
+                }
+            }
+        }
+        // Primary auto-advance: a GCD timer (not `.task`, which can be cancelled by
+        // view-lifecycle churn during the Razorpay Safari hand-off). It fires on the
+        // main run loop no matter what; completeFinalizationIfNeeded is stage-guarded.
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) {
+                MainActor.assumeIsolated { model.completeFinalizationIfNeeded() }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4.5) {
+                showManualContinue = true
+            }
         }
     }
 }

@@ -76,6 +76,7 @@ struct RazorpayGatewayService {
     }
 
     /// Creates a Razorpay Payment Link (hosted checkout: card / UPI / QR).
+    /// No customer details are sent — Razorpay's own page collects the phone (OTP).
     func createPaymentLink(localOrderID: String, amountPaise: Int, description: String) async throws -> PaymentLinkResult {
         let payload: [String: Any] = [
             "localOrderId": localOrderID,

@@ -540,8 +540,15 @@ struct TodayDashboardView: View {
                 onCreateProfile: saveCreatedProfile,
                 onCheckoutCompleted: completeSale,
                 onOrderFinalized: { order in
-                    recordCompletedSale(order: order)
-                    saleAwaitingClose = true
+                    // Defer to the next run-loop tick: recording mutates products /
+                    // clientProfiles / sales, which feed this same view tree. Doing
+                    // that synchronously inside the stage→receipt change is a
+                    // "mutating state during view update" hazard that could drop the
+                    // receipt render and strand the completing spinner.
+                    DispatchQueue.main.async {
+                        recordCompletedSale(order: order)
+                        saleAwaitingClose = true
+                    }
                 }
             )
         case .stock:

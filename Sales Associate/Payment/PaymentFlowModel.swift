@@ -81,6 +81,7 @@ final class PaymentFlowModel: ObservableObject {
 
     func start() {
         // Live: go straight to the Razorpay hosted page after "Proceed to Pay".
+        // Razorpay's own checkout collects the customer's phone (for OTP).
         if useLiveGateway {
             if order.totalPaise > 0 {
                 startHostedCheckout()
@@ -463,14 +464,13 @@ final class PaymentFlowModel: ObservableObject {
 
     private func beginFinalize() {
         setStage(.completing)
-        // Deliberately NOT `schedule(...)`: that carries a generation guard that a
-        // second finalize call (a live poll/webhook race) can invalidate, stranding
-        // the flow on the "completing" spinner. This plain task has no guard, and
-        // `completeFinalizationIfNeeded` is stage-guarded, so the receipt always
-        // appears exactly once.
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 2_600_000_000)
-            self?.completeFinalizationIfNeeded()
+        // A GCD timer — NOT `schedule(...)` (its generation guard could be
+        // invalidated by a second finalize call) and NOT `Task.sleep` (which can be
+        // skipped by task-scheduling/lifecycle edge cases). GCD fires on the main
+        // run loop regardless, and `completeFinalizationIfNeeded` is stage-guarded,
+        // so the receipt always appears exactly once.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) { [weak self] in
+            MainActor.assumeIsolated { self?.completeFinalizationIfNeeded() }
         }
     }
 
@@ -481,6 +481,7 @@ final class PaymentFlowModel: ObservableObject {
     /// internal timer can be orphaned when the Razorpay Safari cover tears down at
     /// hand-off, which previously left the flow stuck on the "completing" spinner.
     func completeFinalizationIfNeeded() {
+        print("Payment: completeFinalizationIfNeeded fired (stage=\(stage))")
         guard stage == .completing else { return }
         if scenario == .finalizeFails {
             setStage(.finalizeNeedsAttention)   // PAY-16B — money is safe
