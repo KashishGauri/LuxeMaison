@@ -9,7 +9,9 @@ struct DashboardContent: View {
     var onShowNotifications: () -> Void = {}
     let onShowDailyTasks: () -> Void
     let onShowCaptureStore: () -> Void
-    let onShowHandledClients: () -> Void
+    let onShowOpenCarts: () -> Void
+    /// Carts opened today — shown on the Open Carts button.
+    var openCartCount: Int = 0
 
     var body: some View {
         ScrollView {
@@ -27,12 +29,12 @@ struct DashboardContent: View {
                         PriorityQueueCard(items: dashboard.priorityItems)
                         QuickActionsCard(
                             actions: dashboard.quickActions,
-                            metrics: dashboard.metrics,
+                            openCartCount: openCartCount,
                             onStartClient: onStartClient,
                             onShowAppointments: onShowAppointments,
                             onShowDailyTasks: onShowDailyTasks,
                             onShowCaptureStore: onShowCaptureStore,
-                            onShowHandledClients: onShowHandledClients
+                            onShowOpenCarts: onShowOpenCarts
                         )
                     }
                     .frame(maxWidth: .infinity)
@@ -292,12 +294,13 @@ private struct SummaryTile: View {
 
 private struct QuickActionsCard: View {
     let actions: [QuickAction]
-    let metrics: [DashboardMetric]
+    /// Number of carts opened today — drives the Open Carts button's label.
+    let openCartCount: Int
     let onStartClient: () -> Void
     let onShowAppointments: () -> Void
     let onShowDailyTasks: () -> Void
     let onShowCaptureStore: () -> Void
-    let onShowHandledClients: () -> Void
+    let onShowOpenCarts: () -> Void
 
     private let actionColumns = [
         GridItem(.flexible(), spacing: 12),
@@ -326,20 +329,67 @@ private struct QuickActionsCard: View {
                     }
                 }
 
-                LazyVGrid(columns: actionColumns, spacing: 12) {
-                    ForEach(metrics) { metric in
-                        MetricTile(metric: metric) {
-                            if metric.title == "Open Carts" {
-                                onShowHandledClients()
-                            }
-                        }
-                    }
-                }
+                OpenCartsButton(count: openCartCount, onTap: onShowOpenCarts)
 
                 Spacer(minLength: 0)
             }
-            .frame(height: 480)
+            .frame(height: 450)
         }
+    }
+}
+
+/// Day-based Open Carts button. Never shows a bare "0" — reads "No opened cart
+/// yet" when the day has none. Tapping lists the day's carts.
+private struct OpenCartsButton: View {
+    let count: Int
+    let onTap: () -> Void
+
+    private var subtitle: String {
+        count > 0 ? "\(count) cart\(count == 1 ? "" : "s") opened today" : "No opened cart yet"
+    }
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 14) {
+                Image(systemName: "cart.fill")
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(Theme.gold)
+                    .frame(width: 46, height: 46)
+                    .background(Theme.selected, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Open Carts")
+                        .font(.subheadline.weight(.black))
+                        .foregroundStyle(Theme.ink)
+                    Text(subtitle)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Theme.muted)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
+
+                Spacer(minLength: 6)
+
+                if count > 0 {
+                    Text("\(count)")
+                        .font(.system(size: 26, weight: .black, design: .rounded))
+                        .foregroundStyle(Theme.gold)
+                        .monospacedDigit()
+                }
+                Image(systemName: "chevron.right")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(Theme.muted.opacity(0.6))
+            }
+            .frame(maxWidth: .infinity, minHeight: 78)
+            .padding(.horizontal, 16)
+            .background(.white.opacity(0.68), in: RoundedRectangle(cornerRadius: 21, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 21, style: .continuous)
+                    .stroke(Theme.line.opacity(0.55), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open Carts, \(subtitle)")
     }
 }
 
@@ -367,35 +417,6 @@ private struct ActionButton: View {
             )
         }
         .buttonStyle(.plain)
-    }
-}
-
-private struct MetricTile: View {
-    let metric: DashboardMetric
-    var onTap: (() -> Void)? = nil
-
-    var body: some View {
-        Button {
-            onTap?()
-        } label: {
-            VStack(alignment: .leading, spacing: 7) {
-                Text(metric.title.uppercased())
-                    .font(.caption.weight(.black))
-                    .tracking(1.1)
-                    .foregroundStyle(Theme.muted)
-                Text(metric.value)
-                    .font(.system(size: 32, weight: .black, design: .rounded))
-            }
-            .frame(maxWidth: .infinity, minHeight: 94, alignment: .leading)
-            .padding(.horizontal, 16)
-            .background(.white.opacity(0.58), in: RoundedRectangle(cornerRadius: 19, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 19, style: .continuous)
-                    .stroke(Theme.line.opacity(0.55), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .disabled(onTap == nil)
     }
 }
 

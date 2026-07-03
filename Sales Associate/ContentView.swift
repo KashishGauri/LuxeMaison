@@ -194,12 +194,9 @@ struct SalesAssociateRootView: View {
                 
                 let weeklySalesSummary = SupabaseDBService.shared.calculateWeeklySalesSummary(sales: sales)
                 
-                let uniqueClientsCount = Set(sales.compactMap { $0.customerID }).count
-                let openCartsValue = String(format: "%02d", uniqueClientsCount)
-
-                let metrics = [
-                    DashboardMetric(title: "Open Carts", value: openCartsValue)
-                ]
+                // Open Carts is now a day-based button computed from today's sales
+                // (see `todayOpenCarts`); the dashboard no longer carries it as a metric.
+                let metrics: [DashboardMetric] = []
                 
                 await MainActor.run {
                     self.dynamicSalesGoal = salesGoal
@@ -251,9 +248,7 @@ struct SalesAssociateRootView: View {
                     DBSale(id: "s3", customerID: "3c193803-be64-4a46-bcaf-a00ccfa497da", salesAssociateID: associateID, storeID: "mock-store", salesDate: "2026-07-02", currency: "INR", preTaxAmount: 1000.0, taxAmount: 100.0, totalAmount: 1100.0)
                 ]
                 
-                let metrics = [
-                    DashboardMetric(title: "Open Carts", value: "03")
-                ]
+                let metrics: [DashboardMetric] = []
                 
                 await MainActor.run {
                     self.dynamicSalesGoal = salesGoal
@@ -436,7 +431,7 @@ struct TodayDashboardView: View {
     @State private var isAssociateProfilePresented = false
     @State private var isAppointmentsSheetPresented = false
     @State private var isNotificationsSheetPresented = false
-    @State private var isHandledClientsPresented = false
+    @State private var isOpenCartsPresented = false
     @State private var isDailyTasksSheetPresented = false
     @State private var isCaptureStorePresented = false
     /// Order ids already recorded, so a sale is never written twice (it is recorded
@@ -447,6 +442,12 @@ struct TodayDashboardView: View {
     /// Billing reopens fresh next time.
     @State private var saleAwaitingClose = false
     let onLogout: () -> Void
+
+    /// Carts opened today (day-based). A cart == a recorded sale for today's date.
+    private var todayOpenCarts: [DBSale] {
+        let today = Self.saleDateString()
+        return sales.filter { $0.salesDate == today }
+    }
 
     var body: some View {
         GeometryReader { proxy in
@@ -490,8 +491,8 @@ struct TodayDashboardView: View {
             .sheet(isPresented: $isNotificationsSheetPresented) {
                 NotificationsSheet(appointments: appointments, clientProfiles: clientProfiles)
             }
-            .sheet(isPresented: $isHandledClientsPresented) {
-                HandledClientsSheet(sales: sales, clientProfiles: clientProfiles)
+            .sheet(isPresented: $isOpenCartsPresented) {
+                OpenCartsSheet(sales: sales, clientProfiles: clientProfiles)
             }
             .sheet(isPresented: $isDailyTasksSheetPresented) {
                 DailyTasksSheet(dailyTasks: $dailyTasks, associateId: dashboard.associate.id)
@@ -523,7 +524,8 @@ struct TodayDashboardView: View {
                 onShowNotifications: { isNotificationsSheetPresented = true },
                 onShowDailyTasks: { isDailyTasksSheetPresented = true },
                 onShowCaptureStore: { isCaptureStorePresented = true },
-                onShowHandledClients: { isHandledClientsPresented = true }
+                onShowOpenCarts: { isOpenCartsPresented = true },
+                openCartCount: todayOpenCarts.count
             )
         case .client:
             ClientelingContent(
@@ -1578,15 +1580,52 @@ private struct NotificationRow: View {
 }
 
 
-struct HandledClientsSheet: View {
+/// Lists the carts opened today (day-based). A cart == a sale recorded for today's
+/// date. Shows "No opened cart yet" when the day has none.
+struct OpenCartsSheet: View {
     let sales: [DBSale]
     let clientProfiles: [ClientProfile]
     @Environment(\.dismiss) private var dismiss
 
-    private var handledClients: [ClientProfile] {
-        let uniqueCustomerIDs = Array(Set(sales.compactMap { $0.customerID }))
-        return uniqueCustomerIDs.compactMap { customerID in
-            clientProfiles.first(where: { $0.id == customerID })
+    private var todaysCarts: [DBSale] {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        let today = formatter.string(from: Date())
+        return sales.filter { $0.salesDate == today }
+    }
+
+    /// Today's client orders as (name, totalPaise), derived from purchase history.
+    /// Sales rows don't carry a resolvable client id (customerID is the DB default),
+    /// so a cart's client is recovered by matching its total against these orders.
+    private var todaysClientOrders: [(name: String, totalPaise: Int)] {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "dd MMM yyyy"
+        let today = formatter.string(from: Date())
+        var orders: [(String, Int)] = []
+        for client in clientProfiles {
+            let todaysPurchases = client.purchaseHistory.filter { $0.purchasedOn == today }
+            let byOrder = Dictionary(grouping: todaysPurchases) { $0.orderID ?? $0.id }
+            for (_, items) in byOrder {
+                let totalPaise = items.reduce(0) { $0 + ($1.grossPaise ?? 0) }
+                if totalPaise > 0 { orders.append((client.name, totalPaise)) }
+            }
+        }
+        return orders
+    }
+
+    /// Each of today's carts labelled with the matching client's name (matched by
+    /// order total, exact since both come from the same order) — or "Walk-in
+    /// customer" when the cart had no client profile (a guest checkout).
+    private var cartRows: [(id: String, title: String, amount: Double)] {
+        var available = todaysClientOrders
+        return todaysCarts.map { sale in
+            let salePaise = Int((sale.totalAmount * 100).rounded())
+            if let matchIndex = available.firstIndex(where: { $0.totalPaise == salePaise }) {
+                let name = available[matchIndex].name
+                available.remove(at: matchIndex)
+                return (sale.id, name, sale.totalAmount)
+            }
+            return (sale.id, "Walk-in customer", sale.totalAmount)
         }
     }
 
@@ -1606,34 +1645,37 @@ struct HandledClientsSheet: View {
                     .buttonStyle(.plain)
 
                     VStack(alignment: .leading, spacing: 5) {
-                        Text("Handled Clients")
+                        Text("Open Carts")
                             .font(.title2.weight(.black))
                             .foregroundStyle(Theme.ink)
-                        Text("Clients you have handled or assisted today")
+                        Text("Carts opened today")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(Theme.muted)
                     }
 
                     Spacer()
 
-                    Text("\(handledClients.count) Clients")
-                        .font(.caption.weight(.black))
-                        .foregroundStyle(Theme.gold)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(Theme.selected, in: Capsule())
+                    // Never surface a "0" — the empty state below carries that case.
+                    if !todaysCarts.isEmpty {
+                        Text("\(todaysCarts.count) cart\(todaysCarts.count == 1 ? "" : "s")")
+                            .font(.caption.weight(.black))
+                            .foregroundStyle(Theme.gold)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(Theme.selected, in: Capsule())
+                    }
                 }
 
-                if handledClients.isEmpty {
+                if todaysCarts.isEmpty {
                     VStack(spacing: 12) {
-                        Image(systemName: "person.3.sequence.fill")
+                        Image(systemName: "cart.badge.questionmark")
                             .font(.system(size: 48))
                             .foregroundStyle(Theme.muted.opacity(0.6))
                             .padding(.top, 40)
-                        Text("No Clients Handled Today")
+                        Text("No opened cart yet")
                             .font(.headline.weight(.bold))
                             .foregroundStyle(Theme.ink)
-                        Text("Any sales checkout or profile update you complete will show up here.")
+                        Text("Carts you open and check out today will show up here.")
                             .font(.subheadline.weight(.medium))
                             .foregroundStyle(Theme.muted)
                             .multilineTextAlignment(.center)
@@ -1642,33 +1684,29 @@ struct HandledClientsSheet: View {
                     .frame(maxWidth: .infinity, minHeight: 280)
                 } else {
                     VStack(spacing: 12) {
-                        ForEach(handledClients) { client in
+                        ForEach(cartRows, id: \.id) { row in
                             HStack(spacing: 16) {
-                                ClientAvatar(initials: client.initials, size: 54)
+                                Image(systemName: "bag.fill")
+                                    .font(.headline.weight(.bold))
+                                    .foregroundStyle(Theme.gold)
+                                    .frame(width: 48, height: 48)
+                                    .background(Theme.selected, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
 
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text(client.name)
+                                    Text(row.title)
                                         .font(.headline.weight(.bold))
                                         .foregroundStyle(Theme.ink)
-                                    Text("\(client.phone) • \(client.boutique)")
+                                    Text("Checked out today")
                                         .font(.caption.weight(.bold))
                                         .foregroundStyle(Theme.muted)
                                 }
 
                                 Spacer()
 
-                                VStack(alignment: .trailing, spacing: 4) {
-                                    Text(client.tier.uppercased())
-                                        .font(.caption.weight(.black))
-                                        .foregroundStyle(Theme.gold)
-                                        .padding(.horizontal, 9)
-                                        .padding(.vertical, 4)
-                                        .background(Theme.selected, in: Capsule())
-                                    
-                                    Text(client.lifetimePurchaseText)
-                                        .font(.caption.weight(.bold))
-                                        .foregroundStyle(Theme.ink)
-                                }
+                                Text(formatAmount(row.amount))
+                                    .font(.headline.weight(.black))
+                                    .monospacedDigit()
+                                    .foregroundStyle(Theme.ink)
                             }
                             .padding(14)
                             .background(.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -1684,6 +1722,15 @@ struct HandledClientsSheet: View {
         }
         .frame(minWidth: 460, minHeight: 520)
         .background(Theme.background)
+    }
+
+    private func formatAmount(_ value: Double) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.locale = Locale(identifier: "en_IN")
+        formatter.maximumFractionDigits = 0
+        let num = formatter.string(from: NSNumber(value: value)) ?? "\(Int(value))"
+        return "Rs. \(num)"
     }
 }
 
