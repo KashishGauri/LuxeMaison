@@ -311,21 +311,28 @@ struct SalesAssociateRootView: View {
         }
     }
 
+    /// Maps a product's DB `category` to one of the `productcategory` enum ids used
+    /// by the Billing category tabs. Direct-matches the enum values first, with a
+    /// fuzzy fallback for any legacy/free-text strings.
     private func normalizeCategoryID(_ category: String) -> String {
         let lower = category.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if lower.contains("handbag") || lower.contains("bag") || lower.contains("clutch") || lower.contains("pouch") || lower.contains("backpack") || lower.contains("case") || lower.contains("tote") || lower.contains("briefcase") {
-            return "handbags"
-        } else if lower.contains("watch") || lower.contains("chrono") || lower.contains("president") {
-            return "watches"
-        } else if lower.contains("fragrance") || lower.contains("perfume") || lower.contains("scent") || lower.contains("cologne") || lower.contains("mist") || lower.contains("spray") || lower.contains("wind") {
-            return "fragrances"
-        } else if lower.contains("footwear") || lower.contains("shoe") || lower.contains("heel") || lower.contains("flat") || lower.contains("loafer") || lower.contains("oxford") || lower.contains("slip") {
-            return "footwear"
-        } else if lower.contains("jewel") || lower.contains("gem") || lower.contains("ring") || lower.contains("necklace") || lower.contains("bracelet") || lower.contains("pendant") || lower.contains("earring") || lower.contains("bangle") || lower.contains("set") || lower.contains("brooch") || lower.contains("sparkle") {
-            // Redirect jewellery/sets to watches (accessories)
-            return "watches"
-        }
-        return "handbags" // Default fallback
+
+        // Direct match on the Supabase `productcategory` enum values.
+        if lower.hasPrefix("handbag") { return "handbags" }
+        if lower.hasPrefix("fragrance") { return "fragrances" }
+        if lower.hasPrefix("accessor") { return "accessories" }
+        if lower.hasPrefix("jewel") { return "jewellery" }
+        if lower.hasPrefix("watch") { return "watches" }
+        if lower.hasPrefix("footwa") || lower.hasPrefix("footwe") { return "footware" }
+
+        // Fuzzy fallback for legacy / free-text category strings.
+        if lower.contains("bag") || lower.contains("clutch") || lower.contains("tote") || lower.contains("pouch") || lower.contains("backpack") || lower.contains("briefcase") { return "handbags" }
+        if lower.contains("perfume") || lower.contains("scent") || lower.contains("cologne") || lower.contains("mist") { return "fragrances" }
+        if lower.contains("ring") || lower.contains("necklace") || lower.contains("bracelet") || lower.contains("pendant") || lower.contains("earring") || lower.contains("bangle") || lower.contains("brooch") || lower.contains("gem") { return "jewellery" }
+        if lower.contains("watch") || lower.contains("chrono") || lower.contains("president") { return "watches" }
+        if lower.contains("shoe") || lower.contains("heel") || lower.contains("loafer") || lower.contains("oxford") || lower.contains("sling") || lower.contains("flat") { return "footware" }
+
+        return "accessories" // Default → Accessories (catch-all)
     }
 
     private func loadProductsFromDB() async {
