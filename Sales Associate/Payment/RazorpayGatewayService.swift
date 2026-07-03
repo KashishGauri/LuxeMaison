@@ -121,7 +121,15 @@ struct RazorpayGatewayService {
         let dictionary = object as? [String: Any] ?? [:]
 
         guard (200...299).contains(http.statusCode) else {
-            let message = (dictionary["error"] as? String) ?? "Gateway error (\(http.statusCode))."
+            // Prefer Razorpay's own reason (detail.error.description, e.g. "test mode
+            // limit of 30 reached for payment_link") over the generic wrapper message.
+            var message = (dictionary["error"] as? String) ?? "Gateway error (\(http.statusCode))."
+            if let detail = dictionary["detail"] as? [String: Any],
+               let razorpayError = detail["error"] as? [String: Any],
+               let description = razorpayError["description"] as? String,
+               !description.isEmpty {
+                message = description
+            }
             throw GatewayError.server(message)
         }
         return dictionary

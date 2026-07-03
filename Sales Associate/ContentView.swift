@@ -123,6 +123,7 @@ struct SalesAssociateRootView: View {
                 recentlyViewedClients: $recentlyViewedClients,
                 sellingSession: $sellingSession,
                 onReloadProducts: { await loadProductsFromDB() },
+                onReloadSalesData: { await loadSalesAndGoal() },
                 onLogout: onLogout
             )
             .transition(.opacity)
@@ -432,6 +433,9 @@ struct TodayDashboardView: View {
     /// Re-fetches the product catalogue (and its StoreInventory stock) from Supabase.
     /// Called after a sale so the Stock tab shows the real remaining quantity.
     var onReloadProducts: () async -> Void = {}
+    /// Re-fetches sales, target and tasks from Supabase. Called after a sale so the
+    /// Today dashboard (monthly goal, weekly sales, metrics) reflects it.
+    var onReloadSalesData: () async -> Void = {}
     @State private var isAssociateProfilePresented = false
     @State private var isAppointmentsSheetPresented = false
     @State private var isNotificationsSheetPresented = false
@@ -659,8 +663,10 @@ struct TodayDashboardView: View {
                     items: saleItems
                 )
             }
-            // Refresh from Supabase so the Stock tab reflects the DB quantities.
+            // Refresh from Supabase so the Stock tab reflects the DB quantities and
+            // the Today dashboard (goal, weekly sales, metrics) reflects the new sale.
             await onReloadProducts()
+            await onReloadSalesData()
         }
 
         // 3) Append to the client's purchase history (guests have no profile).
