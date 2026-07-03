@@ -5,6 +5,12 @@ class SupabaseDBService {
     
     private let baseURL = "https://zfengirsvsjikrhxrfit.supabase.co/rest/v1"
     private let anonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmZW5naXJzdnNqaWtyaHhyZml0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0MTg5NTIsImV4cCI6MjA5Nzk5NDk1Mn0.rk57GzYVJDkHtEH649eXekzqox0s3O3nH3u8f5KHY5M"
+
+    /// The boutique this app sells for. `Sales`/`SalesItem` rows are written against
+    /// it, so it must be a real row in the `Store` table (verified) — it is the same
+    /// store the `StoreInventory` rows belong to. The `Sales.storeID` column default
+    /// points at a stale id, so this must always be sent explicitly.
+    private let defaultStoreID = "11111111-1111-1111-1111-111111111111"
     
     private init() {}
     
@@ -532,8 +538,169 @@ class SupabaseDBService {
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
             throw URLError(.badServerResponse)
         }
-        
+
         return try JSONDecoder().decode([DBProduct].self, from: data)
+    }
+
+    /// Fetches on-hand stock rows from the `StoreInventory` table. Stock is
+    /// sourced from here (`currentquantity`), keyed by `productid` (= Product.id),
+    /// rather than the stale `Product.current_stock` column.
+    func fetchStoreInventory() async throws -> [DBStoreInventory] {
+        guard let url = URL(string: "\(baseURL)/StoreInventory?select=*") else {
+            throw URLError(.badURL)
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+
+        return try JSONDecoder().decode([DBStoreInventory].self, from: data)
+    }
+
+    /// Decrements on-hand stock in `StoreInventory` for a purchased product.
+    /// Reads the current quantity for `productID` (= Product.id), then writes back
+    /// `max(0, current - quantity)`. Called after a sale is finalized so database
+    /// stock reflects what the client just bought.
+    func decrementStoreInventory(productID: String, by quantity: Int) async {
+        guard quantity > 0 else { return }
+        // Use the anon key (RLS is disabled; anon has table grants — verified) so the
+        // write never depends on a valid/unexpired user session token.
+        let token = anonKey
+
+        // 1) Read the current inventory row for this product.
+        guard let getURL = URL(string: "\(baseURL)/StoreInventory?productid=eq.\(productID)&select=id,currentquantity") else {
+            return
+        }
+        var getRequest = URLRequest(url: getURL)
+        getRequest.httpMethod = "GET"
+        getRequest.setValue(anonKey, forHTTPHeaderField: "apikey")
+        getRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: getRequest)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200,
+                  let rows = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+                  let row = rows.first,
+                  let rowID = row["id"] as? String,
+                  let current = row["currentquantity"] as? Int else {
+                print("StoreInventory decrement skipped — no inventory row for \(productID)")
+                return
+            }
+
+            let newQuantity = max(0, current - quantity)
+
+            // 2) Write back the reduced quantity by row id.
+            guard let patchURL = URL(string: "\(baseURL)/StoreInventory?id=eq.\(rowID)") else { return }
+            var patchRequest = URLRequest(url: patchURL)
+            patchRequest.httpMethod = "PATCH"
+            patchRequest.setValue(anonKey, forHTTPHeaderField: "apikey")
+            patchRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            patchRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            patchRequest.setValue("return=minimal", forHTTPHeaderField: "Prefer")
+            patchRequest.httpBody = try JSONSerialization.data(withJSONObject: ["currentquantity": newQuantity])
+
+            let (_, patchResponse) = try await URLSession.shared.data(for: patchRequest)
+            if let patchHTTP = patchResponse as? HTTPURLResponse {
+                print("StoreInventory decrement for \(productID): \(current) -> \(newQuantity) (HTTP \(patchHTTP.statusCode))")
+            }
+        } catch {
+            print("Failed to decrement StoreInventory for \(productID): \(error)")
+        }
+    }
+
+    /// One purchased product within a sale (amounts in rupees).
+    struct SaleItemInput {
+        let productID: String      // Product.id (uuid)
+        let quantity: Int
+        let unitPriceRupees: Double
+        let subTotalRupees: Double
+    }
+
+    /// Records a finalized sale in Supabase: one `Sales` row (the payment totals)
+    /// plus one `SalesItem` row per purchased product — a single sale may contain
+    /// several products and quantities. Amounts are in rupees. Best-effort: logs and
+    /// returns on failure, since stock is already decremented and the receipt shown.
+    func recordSale(
+        salesAssociateID: String,
+        salesDate: String,
+        preTaxAmount: Double,
+        taxAmount: Double,
+        totalAmount: Double,
+        items: [SaleItemInput]
+    ) async {
+        // Use the anon key (RLS is disabled; anon has table grants — verified) so the
+        // write never depends on a valid/unexpired user session token.
+        let token = anonKey
+
+        // 1) Insert the Sales row and read back its generated id.
+        guard let salesURL = URL(string: "\(baseURL)/Sales") else { return }
+        var salesRequest = URLRequest(url: salesURL)
+        salesRequest.httpMethod = "POST"
+        salesRequest.setValue(anonKey, forHTTPHeaderField: "apikey")
+        salesRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        salesRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        salesRequest.setValue("return=representation", forHTTPHeaderField: "Prefer")
+
+        // customerID is omitted on purpose — the app's local client ids (e.g. "CL-3557")
+        // are not the DB customer uuids, so the column default is used instead.
+        let salesBody: [String: Any] = [
+            "salesAssociateID": salesAssociateID,
+            "storeID": defaultStoreID,
+            "salesDate": salesDate,
+            "Currency": "INR",
+            "preTaxAmount": preTaxAmount,
+            "taxAmount": taxAmount,
+            "totalAmount": totalAmount
+        ]
+
+        do {
+            salesRequest.httpBody = try JSONSerialization.data(withJSONObject: salesBody)
+            let (data, response) = try await URLSession.shared.data(for: salesRequest)
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 || httpResponse.statusCode == 201,
+                  let rows = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+                  let saleID = rows.first?["id"] as? String else {
+                print("Sales insert failed: \(String(data: data, encoding: .utf8) ?? "<no body>")")
+                return
+            }
+            print("Sales recorded: \(saleID), total Rs.\(totalAmount)")
+
+            // 2) Insert one SalesItem row per purchased product (batch).
+            let validItems = items.filter { !$0.productID.isEmpty && $0.quantity > 0 }
+            guard !validItems.isEmpty, let itemsURL = URL(string: "\(baseURL)/SalesItem") else { return }
+            let itemBodies: [[String: Any]] = validItems.map { item in
+                [
+                    "saleID": saleID,
+                    "productID": item.productID,
+                    "quantity": item.quantity,
+                    "unitPrice": item.unitPriceRupees,
+                    "subTotal": item.subTotalRupees
+                ]
+            }
+            var itemsRequest = URLRequest(url: itemsURL)
+            itemsRequest.httpMethod = "POST"
+            itemsRequest.setValue(anonKey, forHTTPHeaderField: "apikey")
+            itemsRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            itemsRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            itemsRequest.setValue("return=minimal", forHTTPHeaderField: "Prefer")
+            itemsRequest.httpBody = try JSONSerialization.data(withJSONObject: itemBodies)
+
+            let (itemsData, itemsResponse) = try await URLSession.shared.data(for: itemsRequest)
+            if let itemsHTTP = itemsResponse as? HTTPURLResponse {
+                print("SalesItem insert (\(validItems.count) items): HTTP \(itemsHTTP.statusCode)")
+                if !(itemsHTTP.statusCode == 200 || itemsHTTP.statusCode == 201) {
+                    print("SalesItem body: \(String(data: itemsData, encoding: .utf8) ?? "")")
+                }
+            }
+        } catch {
+            print("Failed to record sale: \(error)")
+        }
     }
 }
 
@@ -752,5 +919,13 @@ struct DBProduct: Codable {
         case currentStock = "current_stock"
         case reorderThreshold = "reorder_threshold"
     }
+}
+
+struct DBStoreInventory: Codable {
+    let id: String
+    let storeid: String
+    let productid: String
+    var currentquantity: Int
+    let thresholdquantity: Int?
 }
 

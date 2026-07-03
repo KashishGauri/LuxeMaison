@@ -52,23 +52,31 @@ enum PaymentOrderBuilder {
 struct PaymentFlowView: View {
     @StateObject private var model: PaymentFlowModel
     @State private var started = false
+    @State private var hasRecordedSale = false
     let onExit: () -> Void
     /// Passes the finalized order back when a sale was actually paid (receipt /
     /// success) so the caller can record it; nil for non-sale dismissals like
     /// closing a restricted-action request.
     let onCompleted: (_ paidOrder: FrozenOrder?) -> Void
+    /// Fired once, the moment the order is finalized (invoice issued, receipt
+    /// shown) — before the associate taps Done. This is what actually records the
+    /// sale (stock, Sales/SalesItem, purchase history) so nothing is lost if the
+    /// receipt is dismissed without tapping Done.
+    let onOrderFinalized: (_ finalizedOrder: FrozenOrder) -> Void
 
     init(
         products: [SalesProduct],
         session: SellingSessionState,
         fulfillment: PaymentFulfillmentSummary,
         onExit: @escaping () -> Void,
-        onCompleted: @escaping (_ paidOrder: FrozenOrder?) -> Void
+        onCompleted: @escaping (_ paidOrder: FrozenOrder?) -> Void,
+        onOrderFinalized: @escaping (_ finalizedOrder: FrozenOrder) -> Void = { _ in }
     ) {
         let order = PaymentOrderBuilder.build(products: products, session: session, fulfillment: fulfillment)
         _model = StateObject(wrappedValue: PaymentFlowModel(order: order))
         self.onExit = onExit
         self.onCompleted = onCompleted
+        self.onOrderFinalized = onOrderFinalized
     }
 
     var body: some View {
@@ -93,6 +101,13 @@ struct PaymentFlowView: View {
             guard !started else { return }
             started = true
             model.start()
+        }
+        // Record the sale as soon as the order finalizes (receipt/success), not on
+        // Done — so it persists even if the associate closes the receipt.
+        .onChange(of: model.stage) { _, newStage in
+            guard !hasRecordedSale, newStage == .receipt || newStage == .success else { return }
+            hasRecordedSale = true
+            onOrderFinalized(model.order)
         }
     }
 

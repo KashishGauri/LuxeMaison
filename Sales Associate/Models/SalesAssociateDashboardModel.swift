@@ -541,7 +541,11 @@ struct SalesProduct: Identifiable, Equatable {
     var stockQuantity: Int = 0
     /// Tracks if the product was fetched from the Supabase database.
     var existsInDB: Bool = true
-    
+    /// The Supabase `Product.id` (uuid) backing this SKU. Used to join
+    /// `StoreInventory` (its `productid`) for on-hand stock and to decrement that
+    /// stock when a sale is finalized. Empty for local/dummy products.
+    var dbID: String = ""
+
     // Additional Supabase database fields
     var barcode: String? = nil
     var isActive: Bool? = true

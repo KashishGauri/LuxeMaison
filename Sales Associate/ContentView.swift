@@ -120,6 +120,7 @@ struct SalesAssociateRootView: View {
                 navigationMode: $navigationMode,
                 recentlyViewedClients: $recentlyViewedClients,
                 sellingSession: $sellingSession,
+                onReloadProducts: { await loadProductsFromDB() },
                 onLogout: onLogout
             )
             .transition(.opacity)
@@ -327,7 +328,21 @@ struct SalesAssociateRootView: View {
         do {
             let dbProducts = try await SupabaseDBService.shared.fetchDBProducts()
             print("Supabase Sync: Fetched \(dbProducts.count) products from DB.")
-            
+
+            // On-hand stock is sourced from StoreInventory.currentquantity, keyed
+            // by productid (= Product.id). Summed across rows in case a product
+            // spans more than one inventory row.
+            var inventoryByProductID: [String: Int] = [:]
+            do {
+                let inventory = try await SupabaseDBService.shared.fetchStoreInventory()
+                for row in inventory {
+                    inventoryByProductID[row.productid, default: 0] += row.currentquantity
+                }
+                print("Supabase Sync: Fetched \(inventory.count) StoreInventory rows.")
+            } catch {
+                print("Supabase Sync: StoreInventory fetch failed, falling back to Product.current_stock: \(error)")
+            }
+
             await MainActor.run {
                 self.products = dbProducts.map { dbProduct in
                     // Format price
@@ -335,7 +350,11 @@ struct SalesAssociateRootView: View {
                     let normalizedPrice = rawPrice < 1000 ? rawPrice * 100000 : rawPrice
                     let formattedPrice = self.formatPrice(normalizedPrice)
                     let normalizedCat = self.normalizeCategoryID(dbProduct.category ?? "accessories")
-                    
+
+                    // Prefer StoreInventory; fall back to Product.current_stock only
+                    // when the product has no inventory row.
+                    let stockQty = inventoryByProductID[dbProduct.id] ?? dbProduct.currentStock ?? 0
+
                     return SalesProduct(
                         id: dbProduct.sku ?? dbProduct.id,
                         name: dbProduct.name,
@@ -346,15 +365,16 @@ struct SalesAssociateRootView: View {
                         originalPrice: nil,
                         imageName: dbProduct.imageUrl ?? "default_product",
                         badge: nil,
-                        availability: (dbProduct.currentStock ?? 0) > 0 ? "In boutique" : "Out of stock",
-                        stockNote: "\((dbProduct.currentStock ?? 0)) pieces available in boutique",
+                        availability: stockQty > 0 ? "In boutique" : "Out of stock",
+                        stockNote: stockQty > 0 ? "\(stockQty) pieces available in boutique" : "Not in boutique",
                         sizes: ["One size"],
                         materials: ["Standard"],
                         colors: ["Default"],
                         suggestedReason: "Boutique verified luxury item",
                         isWishlisted: false,
-                        stockQuantity: dbProduct.currentStock ?? 0,
+                        stockQuantity: stockQty,
                         existsInDB: true,
+                        dbID: dbProduct.id,
                         barcode: dbProduct.barcode,
                         isActive: dbProduct.isActive,
                         reorderThreshold: dbProduct.reorderThreshold
@@ -364,9 +384,8 @@ struct SalesAssociateRootView: View {
             }
         } catch {
             print("Supabase Sync Products ERROR: \(error)")
-            await MainActor.run {
-                self.products = []
-            }
+            // Keep whatever products are already loaded — a failed refresh (e.g. the
+            // reload right after a sale) must not blank out the Stock/Billing tabs.
         }
     }
 }
@@ -392,11 +411,21 @@ struct TodayDashboardView: View {
     @Binding var navigationMode: SalesNavigationMode
     @Binding var recentlyViewedClients: [ClientProfile]
     @Binding var sellingSession: SellingSessionState
+    /// Re-fetches the product catalogue (and its StoreInventory stock) from Supabase.
+    /// Called after a sale so the Stock tab shows the real remaining quantity.
+    var onReloadProducts: () async -> Void = {}
     @State private var isAssociateProfilePresented = false
     @State private var isAppointmentsSheetPresented = false
     @State private var isNotificationsSheetPresented = false
     @State private var isHandledClientsPresented = false
     @State private var isDailyTasksSheetPresented = false
+    /// Order ids already recorded, so a sale is never written twice (it is recorded
+    /// at receipt generation, and Done may fire the same path again).
+    @State private var recordedOrderIDs: Set<String> = []
+    /// True once a receipt has been generated but the associate hasn't tapped Done.
+    /// If they leave the Billing tab in this state, the client session is closed so
+    /// Billing reopens fresh next time.
+    @State private var saleAwaitingClose = false
     let onLogout: () -> Void
 
     var body: some View {
@@ -447,6 +476,15 @@ struct TodayDashboardView: View {
             .sheet(isPresented: $isDailyTasksSheetPresented) {
                 DailyTasksSheet(dailyTasks: $dailyTasks, associateId: dashboard.associate.id)
             }
+            .onChange(of: selectedTab) { oldTab, newTab in
+                // If a receipt was generated but the associate left Billing without
+                // tapping Done, close the client session so Billing reopens as a
+                // normal, client-free billing screen next time.
+                if oldTab == .sell, newTab != .sell, saleAwaitingClose {
+                    sellingSession.discard()
+                    saleAwaitingClose = false
+                }
+            }
         }
     }
 
@@ -478,7 +516,11 @@ struct TodayDashboardView: View {
                 session: $sellingSession,
                 onDiscardClient: discardSellingSession,
                 onCreateProfile: saveCreatedProfile,
-                onCheckoutCompleted: completeSale
+                onCheckoutCompleted: completeSale,
+                onOrderFinalized: { order in
+                    recordCompletedSale(order: order)
+                    saleAwaitingClose = true
+                }
             )
         case .stock:
             StockContent(dashboard: stockDashboard, products: products)
@@ -492,16 +534,19 @@ struct TodayDashboardView: View {
     }
 
     private func startGuestSelling() {
+        saleAwaitingClose = false
         sellingSession.startNewGuest()
         selectedTab = .sell
     }
 
     private func startClientSelling(_ client: ClientProfile) {
+        saleAwaitingClose = false
         sellingSession.startForClient(client)
         selectedTab = .sell
     }
 
     private func discardSellingSession() {
+        saleAwaitingClose = false
         sellingSession.discard()
         selectedTab = .today
     }
@@ -539,17 +584,64 @@ struct TodayDashboardView: View {
     /// to the client's purchase history.
     private func recordCompletedSale(order: FrozenOrder) {
         guard !order.lineItems.isEmpty else { return }
+        // Record each order exactly once — the sale is captured at receipt
+        // generation, and tapping Done can trigger this same path again.
+        guard !recordedOrderIDs.contains(order.orderID) else { return }
+        recordedOrderIDs.insert(order.orderID)
 
-        // 1) Reduce on-hand stock by the purchased quantity.
+        // 1) Reduce on-hand stock locally for an instant UI update.
         for item in order.lineItems {
             if let index = products.firstIndex(where: { $0.id == item.id }) {
                 products[index].stockQuantity = max(0, products[index].stockQuantity - item.quantity)
             }
         }
 
-        // 2) Append to the client's purchase history (guests have no profile).
-        guard let client = sellingSession.createdClient else { return }
         let productsByID = Dictionary(uniqueKeysWithValues: products.map { ($0.id, $0) })
+
+        // 2) Persist the sale to Supabase — decrement StoreInventory, write the
+        //    Sales + SalesItem rows (one item per purchased product), then reload
+        //    the catalogue so the Stock tab shows the real remaining quantity.
+        //    Runs for guests too (the sale is still recorded).
+        let associateID = dashboard.associate.id
+        let saleItems: [SupabaseDBService.SaleItemInput] = order.lineItems.compactMap { item in
+            guard let dbID = productsByID[item.id]?.dbID, !dbID.isEmpty else { return nil }
+            let quantity = max(1, item.quantity)
+            let subTotal = Double(item.grossInclusivePaise) / 100.0   // paise → rupees
+            return SupabaseDBService.SaleItemInput(
+                productID: dbID,
+                quantity: quantity,
+                unitPriceRupees: subTotal / Double(quantity),
+                subTotalRupees: subTotal
+            )
+        }
+        let preTaxRupees = Double(order.taxablePaise) / 100.0
+        let taxRupees = Double(order.taxPaise) / 100.0
+        let totalRupees = Double(order.totalPaise) / 100.0
+        let saleDate = Self.saleDateString()
+
+        Task {
+            for item in order.lineItems {
+                if let dbID = productsByID[item.id]?.dbID, !dbID.isEmpty {
+                    await SupabaseDBService.shared.decrementStoreInventory(productID: dbID, by: item.quantity)
+                }
+            }
+            // Skip Sales recording for mock associates without a real DB uuid.
+            if !associateID.hasSuffix("-id") {
+                await SupabaseDBService.shared.recordSale(
+                    salesAssociateID: associateID,
+                    salesDate: saleDate,
+                    preTaxAmount: preTaxRupees,
+                    taxAmount: taxRupees,
+                    totalAmount: totalRupees,
+                    items: saleItems
+                )
+            }
+            // Refresh from Supabase so the Stock tab reflects the DB quantities.
+            await onReloadProducts()
+        }
+
+        // 3) Append to the client's purchase history (guests have no profile).
+        guard let client = sellingSession.createdClient else { return }
         let purchasedOn = Self.purchaseDateString()
         let boutique = client.boutique.isEmpty ? dashboard.associate.boutique : client.boutique
         // Every item shares the order's ID so they render as one grouped order.
@@ -594,6 +686,13 @@ struct TodayDashboardView: View {
     private static func purchaseDateString() -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "dd MMM yyyy"
+        return formatter.string(from: Date())
+    }
+
+    /// Date for the Supabase `Sales.salesDate` column (matches the DB's `yyyy-MM-dd`).
+    private static func saleDateString() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
         return formatter.string(from: Date())
     }
 }

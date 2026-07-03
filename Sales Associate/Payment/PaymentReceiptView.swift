@@ -35,9 +35,6 @@ struct ReceiptView: View {
                     lineItemsBlock
                     taxSummaryBlock
                     footerBlock
-                    if order.buyerType.isBusiness, let irn = order.irn {
-                        eInvoiceBlock(irn: irn)
-                    }
                     PaymentPrimaryButton(title: "Done", systemImage: "checkmark", action: onDone)
                         .padding(.top, 4)
                 }
@@ -82,7 +79,6 @@ struct ReceiptView: View {
             metaRow("Invoice no.", order.invoiceNumber ?? "—")
             metaRow("Invoice date", serverDateString)
             metaRow("Place of supply", "\(order.placeOfSupply.stateName) (\(order.placeOfSupply.stateCode))")
-            metaRow("Reverse charge", "No")
             metaRow("Fulfillment", order.fulfillment.label)
         }
         .padding(12)
@@ -169,31 +165,6 @@ struct ReceiptView: View {
                     .font(.headline.weight(.black)).monospacedDigit().foregroundStyle(PaymentTone.success.color)
             }
         }
-    }
-
-    // MARK: e-invoice (B2B, turnover > ₹5 cr)
-
-    private func eInvoiceBlock(irn: String) -> some View {
-        HStack(alignment: .top, spacing: 14) {
-            VStack(alignment: .leading, spacing: 5) {
-                Label("e-Invoice", systemImage: "checkmark.seal.fill")
-                    .font(.caption.weight(.black)).foregroundStyle(PaymentTone.success.color)
-                Text("IRN").font(.caption2.weight(.black)).foregroundStyle(Theme.muted)
-                Text(irn)
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Theme.ink)
-                    .lineLimit(3)
-                Text("Government-signed QR — not the payment QR.")
-                    .font(.caption2.weight(.semibold)).foregroundStyle(Theme.muted)
-            }
-            MockQRCode(seed: "IRN-\(irn)")
-                .frame(width: 96, height: 96)
-                .padding(6)
-                .background(.white, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(PaymentTone.success.color.opacity(0.6), lineWidth: 1.5))
-        }
-        .padding(12)
-        .background(.white.opacity(0.5), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     // MARK: Helpers

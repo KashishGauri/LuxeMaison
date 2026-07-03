@@ -9,6 +9,7 @@ struct SellContent: View {
     let onDiscardClient: () -> Void
     let onCreateProfile: (ClientProfile) -> Void
     let onCheckoutCompleted: (_ paidOrder: FrozenOrder?) -> Void
+    var onOrderFinalized: (_ finalizedOrder: FrozenOrder) -> Void = { _ in }
 
     @State private var query = ""
     @State private var selectedCategoryID: String
@@ -30,7 +31,8 @@ struct SellContent: View {
         session: Binding<SellingSessionState>,
         onDiscardClient: @escaping () -> Void,
         onCreateProfile: @escaping (ClientProfile) -> Void,
-        onCheckoutCompleted: @escaping (_ paidOrder: FrozenOrder?) -> Void
+        onCheckoutCompleted: @escaping (_ paidOrder: FrozenOrder?) -> Void,
+        onOrderFinalized: @escaping (_ finalizedOrder: FrozenOrder) -> Void = { _ in }
     ) {
         self.categories = categories
         self.products = products
@@ -38,6 +40,7 @@ struct SellContent: View {
         self.onDiscardClient = onDiscardClient
         self.onCreateProfile = onCreateProfile
         self.onCheckoutCompleted = onCheckoutCompleted
+        self.onOrderFinalized = onOrderFinalized
         _selectedCategoryID = State(initialValue: categories.first?.id ?? "")
     }
 
@@ -85,7 +88,9 @@ struct SellContent: View {
 
     private func applyActiveFilters(to sourceProducts: [SalesProduct]) -> [SalesProduct] {
         sourceProducts.filter { product in
-            audienceFilter.matches(product)
+            // Billing only browses sellable stock — out-of-stock products are hidden.
+            product.isInStock
+                && audienceFilter.matches(product)
                 && availabilityFilter.matches(product)
                 && priceFilter.matches(product)
                 && (!showsDiscountedOnly || product.originalPrice != nil)
@@ -222,6 +227,9 @@ struct SellContent: View {
                         },
                         onCompleted: { paidOrder in
                             onCheckoutCompleted(paidOrder)
+                        },
+                        onOrderFinalized: { finalizedOrder in
+                            onOrderFinalized(finalizedOrder)
                         }
                     )
                     .id(paymentSessionID)
@@ -323,6 +331,22 @@ struct SellContent: View {
             )
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
+        }
+        // Persist wishlist/cart changes for an existing client straight to
+        // client_profiles (by product id) as items are added or removed — not only
+        // when the session is committed.
+        .onChange(of: session.combinedWishlistProductIDs) { _, newProductIDs in
+            guard let client = session.createdClient else { return }
+            let updatedClient = client.updatingWishlist(newProductIDs)
+            Task {
+                do {
+                    try await SupabaseDBService.shared.upsertProfile(updatedClient)
+                } catch {
+                    #if DEBUG
+                    print("Failed to persist client wishlist to Supabase: \(error)")
+                    #endif
+                }
+            }
         }
     }
 

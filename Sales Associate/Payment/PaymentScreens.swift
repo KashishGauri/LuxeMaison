@@ -678,6 +678,14 @@ struct CompletingView: View {
             message: "Securing stock, generating the invoice and updating loyalty. A second charge is blocked while this finishes.",
             isBusy: true
         )
+        // Reliability backstop: the model also schedules this transition, but that
+        // internal timer can be orphaned when the Razorpay Safari cover tears down
+        // at hand-off — which left the flow stuck here. Driving it from the view's
+        // lifecycle guarantees the order always reaches its receipt.
+        .task {
+            try? await Task.sleep(nanoseconds: 2_600_000_000)
+            model.completeFinalizationIfNeeded()
+        }
     }
 }
 

@@ -277,6 +277,15 @@ final class PaymentFlowModel: ObservableObject {
     }
 
     private func handleLivePaid(amountPaise: Int, paymentID: String?, method: PaymentMethodKind = .upiQR) {
+        // Ignore duplicate "paid" callbacks (overlapping poll ticks, or the webhook
+        // and the poll both firing) once we're already finalizing or done —
+        // otherwise a second hit resets the flow back to the completing spinner.
+        switch stage {
+        case .completing, .receipt, .success, .finalizeNeedsAttention:
+            return
+        default:
+            break
+        }
         qrSessionGeneration += 1   // stop polling
         qrImageURL = nil
         qrCloseBy = nil
@@ -454,15 +463,31 @@ final class PaymentFlowModel: ObservableObject {
 
     private func beginFinalize() {
         setStage(.completing)
-        schedule(2.6, expecting: .completing) { [weak self] in
-            guard let self else { return }
-            if self.scenario == .finalizeFails {
-                self.setStage(.finalizeNeedsAttention)   // PAY-16B — money is safe
-            } else {
-                self.issueInvoice()
-                // Auto-generate and show the tax invoice once the order is finalized.
-                self.setStage(.receipt)
-            }
+        // Deliberately NOT `schedule(...)`: that carries a generation guard that a
+        // second finalize call (a live poll/webhook race) can invalidate, stranding
+        // the flow on the "completing" spinner. This plain task has no guard, and
+        // `completeFinalizationIfNeeded` is stage-guarded, so the receipt always
+        // appears exactly once.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 2_600_000_000)
+            self?.completeFinalizationIfNeeded()
+        }
+    }
+
+    /// Advances the finalize step to the receipt (or the attention screen for the
+    /// finalize-fails demo). Guarded by `stage == .completing` so it runs exactly
+    /// once even though both the internal timer and `CompletingView`'s own
+    /// lifecycle task call it. The view-driven call is a reliability backstop: the
+    /// internal timer can be orphaned when the Razorpay Safari cover tears down at
+    /// hand-off, which previously left the flow stuck on the "completing" spinner.
+    func completeFinalizationIfNeeded() {
+        guard stage == .completing else { return }
+        if scenario == .finalizeFails {
+            setStage(.finalizeNeedsAttention)   // PAY-16B — money is safe
+        } else {
+            issueInvoice()
+            // Auto-generate and show the tax invoice once the order is finalized.
+            setStage(.receipt)
         }
     }
 
