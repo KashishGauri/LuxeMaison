@@ -55,7 +55,7 @@ struct SalesAssociateRootView: View {
 
         let apptPriorities = upcomingAppts.map { appt -> PriorityItem in
             let clientName = clientProfiles.first(where: { $0.id == appt.customerID })?.name ?? appt.customerID
-            let timeString = appt.parsedDateTime.time
+            let parsed = appt.parsedDateTime
             let isVideo = appt.isVideo
 
             let diffMinutes = Int((parseApptDate(appt.date)?.timeIntervalSince(now) ?? 0) / 60)
@@ -71,7 +71,7 @@ struct SalesAssociateRootView: View {
             return PriorityItem(
                 icon: isVideo ? "video.fill" : "calendar.badge.clock",
                 title: isVideo ? "Video Appointment" : "Boutique Visit",
-                subtitle: "\(clientName), \(timeString)",
+                subtitle: "Appointment with \(clientName) on \(parsed.date) at \(parsed.time)",
                 badge: badgeText
             )
         }
@@ -1053,7 +1053,7 @@ struct AppointmentsSheet: View {
                         Image(systemName: "calendar.badge.clock")
                             .font(.system(size: 48))
                             .foregroundStyle(Theme.muted)
-                        Text("No appointments scheduled")
+                        Text("No upcoming appointments")
                             .font(.headline)
                             .foregroundStyle(Theme.muted)
                     }
@@ -1111,8 +1111,16 @@ struct AppointmentsSheet: View {
         errorMessage = nil
         do {
             let fetched = try await SupabaseDBService.shared.fetchAppointments(for: associateID)
+            let now = Date()
+            // Only surface upcoming appointments. Anything that started more than
+            // 15 minutes ago has passed, so yesterday's appointments no longer
+            // linger in the list. Unparseable dates are kept rather than hidden.
+            let upcoming = fetched.filter { appt in
+                guard let start = appt.startDate else { return true }
+                return start.timeIntervalSince(now) > -900
+            }.sorted { ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture) }
             await MainActor.run {
-                self.appointments = fetched.sorted { $0.date < $1.date }
+                self.appointments = upcoming
                 self.isLoading = false
             }
         } catch {
