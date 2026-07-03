@@ -541,14 +541,14 @@ struct TodayDashboardView: View {
                 onDiscardClient: discardSellingSession,
                 onCreateProfile: saveCreatedProfile,
                 onCheckoutCompleted: completeSale,
-                onOrderFinalized: { order in
+                onOrderFinalized: { order, payment in
                     // Defer to the next run-loop tick: recording mutates products /
                     // clientProfiles / sales, which feed this same view tree. Doing
                     // that synchronously inside the stage→receipt change is a
                     // "mutating state during view update" hazard that could drop the
                     // receipt render and strand the completing spinner.
                     DispatchQueue.main.async {
-                        recordCompletedSale(order: order)
+                        recordCompletedSale(order: order, payment: payment)
                         saleAwaitingClose = true
                     }
                 }
@@ -618,7 +618,7 @@ struct TodayDashboardView: View {
     /// Applies the effects of a completed sale: decrements on-hand stock for each
     /// purchased product and appends the order (all its items grouped together)
     /// to the client's purchase history.
-    private func recordCompletedSale(order: FrozenOrder) {
+    private func recordCompletedSale(order: FrozenOrder, payment: PaymentSummary? = nil) {
         guard !order.lineItems.isEmpty else { return }
         // Record each order exactly once — the sale is captured at receipt
         // generation, and tapping Done can trigger this same path again.
@@ -654,6 +654,11 @@ struct TodayDashboardView: View {
         let taxRupees = Double(order.taxPaise) / 100.0
         let totalRupees = Double(order.totalPaise) / 100.0
         let saleDate = Self.saleDateString()
+        let saleTime = Self.saleTimeString()
+        let itemCount = order.lineItems.reduce(0) { $0 + $1.quantity }
+        let invoiceNumber = order.invoiceNumber
+        // Amount actually collected (paise → rupees); fall back to the order total.
+        let amountPaidRupees = payment.map { Double($0.paidPaise) / 100.0 } ?? totalRupees
 
         Task {
             for item in order.lineItems {
@@ -661,15 +666,32 @@ struct TodayDashboardView: View {
                     await SupabaseDBService.shared.decrementStoreInventory(productID: dbID, by: item.quantity)
                 }
             }
-            // Skip Sales recording for mock associates without a real DB uuid.
+            // Skip Sales / receipt recording for mock associates without a real DB uuid.
             if !associateID.hasSuffix("-id") {
-                await SupabaseDBService.shared.recordSale(
+                let saleID = await SupabaseDBService.shared.recordSale(
                     salesAssociateID: associateID,
                     salesDate: saleDate,
+                    saleTime: saleTime,
                     preTaxAmount: preTaxRupees,
                     taxAmount: taxRupees,
                     totalAmount: totalRupees,
                     items: saleItems
+                )
+                // Persist the post-payment receipt (tax-invoice snapshot) linked to
+                // the sale — captured at finalize so it survives closing the receipt.
+                await SupabaseDBService.shared.recordReceipt(
+                    saleID: saleID,
+                    invoiceNumber: invoiceNumber,
+                    salesAssociateID: associateID,
+                    paymentMethod: payment?.method ?? "Unknown",
+                    paymentReference: payment?.reference,
+                    preTaxAmount: preTaxRupees,
+                    taxAmount: taxRupees,
+                    totalAmount: totalRupees,
+                    amountPaid: amountPaidRupees,
+                    itemCount: itemCount,
+                    receiptDate: saleDate,
+                    time: saleTime
                 )
             }
             // Refresh from Supabase so the Stock tab reflects the DB quantities and
@@ -731,6 +753,14 @@ struct TodayDashboardView: View {
     private static func saleDateString() -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: Date())
+    }
+
+    /// Transaction time-of-day for `SalesItem.time` / `receipt.time` (SQL `time`,
+    /// e.g. "17:55:04"). Captured when the payment finalizes.
+    private static func saleTimeString() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
         return formatter.string(from: Date())
     }
 }

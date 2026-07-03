@@ -664,20 +664,22 @@ class SupabaseDBService {
     /// plus one `SalesItem` row per purchased product — a single sale may contain
     /// several products and quantities. Amounts are in rupees. Best-effort: logs and
     /// returns on failure, since stock is already decremented and the receipt shown.
+    @discardableResult
     func recordSale(
         salesAssociateID: String,
         salesDate: String,
+        saleTime: String,
         preTaxAmount: Double,
         taxAmount: Double,
         totalAmount: Double,
         items: [SaleItemInput]
-    ) async {
+    ) async -> String? {
         // Use the anon key (RLS is disabled; anon has table grants — verified) so the
         // write never depends on a valid/unexpired user session token.
         let token = anonKey
 
         // 1) Insert the Sales row and read back its generated id.
-        guard let salesURL = URL(string: "\(baseURL)/Sales") else { return }
+        guard let salesURL = URL(string: "\(baseURL)/Sales") else { return nil }
         var salesRequest = URLRequest(url: salesURL)
         salesRequest.httpMethod = "POST"
         salesRequest.setValue(anonKey, forHTTPHeaderField: "apikey")
@@ -705,20 +707,22 @@ class SupabaseDBService {
                   let rows = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
                   let saleID = rows.first?["id"] as? String else {
                 print("Sales insert failed: \(String(data: data, encoding: .utf8) ?? "<no body>")")
-                return
+                return nil
             }
             print("Sales recorded: \(saleID), total Rs.\(totalAmount)")
 
-            // 2) Insert one SalesItem row per purchased product (batch).
+            // 2) Insert one SalesItem row per purchased product (batch). Each row
+            //    carries the transaction time-of-day (HH:mm:ss) in the `time` column.
             let validItems = items.filter { !$0.productID.isEmpty && $0.quantity > 0 }
-            guard !validItems.isEmpty, let itemsURL = URL(string: "\(baseURL)/SalesItem") else { return }
+            guard !validItems.isEmpty, let itemsURL = URL(string: "\(baseURL)/SalesItem") else { return saleID }
             let itemBodies: [[String: Any]] = validItems.map { item in
                 [
                     "saleID": saleID,
                     "productID": item.productID,
                     "quantity": item.quantity,
                     "unitPrice": item.unitPriceRupees,
-                    "subTotal": item.subTotalRupees
+                    "subTotal": item.subTotalRupees,
+                    "time": saleTime
                 ]
             }
             var itemsRequest = URLRequest(url: itemsURL)
@@ -736,8 +740,71 @@ class SupabaseDBService {
                     print("SalesItem body: \(String(data: itemsData, encoding: .utf8) ?? "")")
                 }
             }
+            return saleID
         } catch {
             print("Failed to record sale: \(error)")
+            return nil
+        }
+    }
+
+    // MARK: - Receipt
+
+    /// Records a receipt row (post-payment tax-invoice snapshot) linked to a `Sales`
+    /// row via `saleID`. Amounts are in rupees; `time` is the transaction time-of-day
+    /// (HH:mm:ss), matching `SalesItem.time`. Best-effort — logs and returns on
+    /// failure since the on-screen receipt was already shown to the customer.
+    func recordReceipt(
+        saleID: String?,
+        invoiceNumber: String?,
+        salesAssociateID: String,
+        paymentMethod: String,
+        paymentReference: String?,
+        preTaxAmount: Double,
+        taxAmount: Double,
+        totalAmount: Double,
+        amountPaid: Double,
+        itemCount: Int,
+        receiptDate: String,
+        time: String
+    ) async {
+        guard let url = URL(string: "\(baseURL)/receipt") else { return }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
+
+        // The receipt belongs to the same boutique the Sales row is written against.
+        var body: [String: Any] = [
+            "salesAssociateID": salesAssociateID,
+            "storeID": defaultStoreID,
+            "paymentMethod": paymentMethod,
+            "preTaxAmount": preTaxAmount,
+            "taxAmount": taxAmount,
+            "totalAmount": totalAmount,
+            "amountPaid": amountPaid,
+            "Currency": "INR",
+            "itemCount": itemCount,
+            "receiptDate": receiptDate,
+            "time": time
+        ]
+        if let saleID { body["saleID"] = saleID }
+        if let invoiceNumber { body["invoiceNumber"] = invoiceNumber }
+        if let paymentReference { body["paymentReference"] = paymentReference }
+
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if let http = response as? HTTPURLResponse {
+                print("Receipt insert: HTTP \(http.statusCode)")
+                if !(200...299).contains(http.statusCode) {
+                    print("Receipt body: \(String(data: data, encoding: .utf8) ?? "")")
+                }
+            }
+        } catch {
+            print("Failed to record receipt: \(error)")
         }
     }
 

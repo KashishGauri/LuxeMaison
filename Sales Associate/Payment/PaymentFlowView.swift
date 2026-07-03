@@ -60,9 +60,10 @@ struct PaymentFlowView: View {
     let onCompleted: (_ paidOrder: FrozenOrder?) -> Void
     /// Fired once, the moment the order is finalized (invoice issued, receipt
     /// shown) — before the associate taps Done. This is what actually records the
-    /// sale (stock, Sales/SalesItem, purchase history) so nothing is lost if the
-    /// receipt is dismissed without tapping Done.
-    let onOrderFinalized: (_ finalizedOrder: FrozenOrder) -> Void
+    /// sale (stock, Sales/SalesItem, receipt, purchase history) so nothing is lost
+    /// if the receipt is dismissed without tapping Done. Carries the payment summary
+    /// (tender used, amount paid) so the receipt row can store it.
+    let onOrderFinalized: (_ finalizedOrder: FrozenOrder, _ payment: PaymentSummary) -> Void
 
     init(
         products: [SalesProduct],
@@ -70,7 +71,7 @@ struct PaymentFlowView: View {
         fulfillment: PaymentFulfillmentSummary,
         onExit: @escaping () -> Void,
         onCompleted: @escaping (_ paidOrder: FrozenOrder?) -> Void,
-        onOrderFinalized: @escaping (_ finalizedOrder: FrozenOrder) -> Void = { _ in }
+        onOrderFinalized: @escaping (_ finalizedOrder: FrozenOrder, _ payment: PaymentSummary) -> Void = { _, _ in }
     ) {
         let order = PaymentOrderBuilder.build(products: products, session: session, fulfillment: fulfillment)
         _model = StateObject(wrappedValue: PaymentFlowModel(order: order))
@@ -107,7 +108,7 @@ struct PaymentFlowView: View {
         .onChange(of: model.stage) { _, newStage in
             guard !hasRecordedSale, newStage == .receipt || newStage == .success else { return }
             hasRecordedSale = true
-            onOrderFinalized(model.order)
+            onOrderFinalized(model.order, model.paymentSummary)
         }
     }
 

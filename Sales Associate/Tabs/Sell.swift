@@ -9,7 +9,7 @@ struct SellContent: View {
     let onDiscardClient: () -> Void
     let onCreateProfile: (ClientProfile) -> Void
     let onCheckoutCompleted: (_ paidOrder: FrozenOrder?) -> Void
-    var onOrderFinalized: (_ finalizedOrder: FrozenOrder) -> Void = { _ in }
+    var onOrderFinalized: (_ finalizedOrder: FrozenOrder, _ payment: PaymentSummary) -> Void = { _, _ in }
 
     @State private var query = ""
     @State private var selectedCategoryID: String
@@ -32,7 +32,7 @@ struct SellContent: View {
         onDiscardClient: @escaping () -> Void,
         onCreateProfile: @escaping (ClientProfile) -> Void,
         onCheckoutCompleted: @escaping (_ paidOrder: FrozenOrder?) -> Void,
-        onOrderFinalized: @escaping (_ finalizedOrder: FrozenOrder) -> Void = { _ in }
+        onOrderFinalized: @escaping (_ finalizedOrder: FrozenOrder, _ payment: PaymentSummary) -> Void = { _, _ in }
     ) {
         self.categories = categories
         self.products = products
@@ -228,8 +228,8 @@ struct SellContent: View {
                         onCompleted: { paidOrder in
                             onCheckoutCompleted(paidOrder)
                         },
-                        onOrderFinalized: { finalizedOrder in
-                            onOrderFinalized(finalizedOrder)
+                        onOrderFinalized: { finalizedOrder, payment in
+                            onOrderFinalized(finalizedOrder, payment)
                         }
                     )
                     .id(paymentSessionID)

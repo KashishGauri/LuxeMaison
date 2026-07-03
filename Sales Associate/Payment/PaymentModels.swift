@@ -135,6 +135,17 @@ struct FrozenOrder: Equatable {
     var igstPaise: Int { treatment == .interState ? taxPaise : 0 }
 }
 
+/// How the order was actually paid — captured at finalize and carried alongside
+/// the order so the sale/receipt records can store the tender used.
+struct PaymentSummary: Equatable {
+    /// Total successfully paid, in paise.
+    let paidPaise: Int
+    /// Primary tender method (e.g. "UPI QR", "Card", "Cash").
+    let method: String
+    /// Gateway/tender reference for the primary tender (e.g. Razorpay payment id).
+    let reference: String?
+}
+
 /// Snapshot of the fulfillment choice carried into payment (decoupled from the
 /// private CheckoutFulfillmentMethod enum in ContentView).
 struct PaymentFulfillmentSummary: Equatable {

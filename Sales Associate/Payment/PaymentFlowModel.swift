@@ -52,6 +52,18 @@ final class PaymentFlowModel: ObservableObject {
     var overpaidPaise: Int { max(0, paidPaise - order.totalPaise) }
     var hasSuccessfulTender: Bool { tenders.contains { $0.status == .successful } }
 
+    /// Snapshot of how the order was paid, captured at finalize for the sale/receipt
+    /// record. Uses the most recent successful tender as the primary method.
+    var paymentSummary: PaymentSummary {
+        let successful = tenders.filter { $0.status == .successful }
+        let primary = successful.last ?? tenders.last
+        return PaymentSummary(
+            paidPaise: paidPaise,
+            method: primary?.method.rawValue ?? "Unknown",
+            reference: primary?.reference
+        )
+    }
+
     var suggestedCardPaise: Int {
         let comfortableQR = 50_000_00   // ₹50,000 clears most customers' daily UPI limit (C2)
         return min(order.totalPaise, max(config.cardMinPaise, order.totalPaise - comfortableQR))
