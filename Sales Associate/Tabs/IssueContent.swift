@@ -12,6 +12,8 @@ enum IssueWorkspaceMode: String, CaseIterable, Identifiable, Equatable {
 struct IssueContent: View {
     let dashboard: IssueDashboard
     let products: [SalesProduct]
+    let associateID: String
+    let storeID: String
 
     @State private var selectedMode: IssueWorkspaceMode = .issue
     @State private var selectedIssueTypeID: String
@@ -22,19 +24,94 @@ struct IssueContent: View {
     @State private var sparePartsCost = "Rs. 0"
     @State private var labourCharge = "Included"
 
-    init(dashboard: IssueDashboard, products: [SalesProduct]) {
+    @State private var selectedProductID: String = ""
+    @State private var selectedPhoto: UIImage? = nil
+    @State private var photoFileName: String? = nil
+    @State private var selectedReceipt: UIImage? = nil
+    @State private var receiptFileName: String? = nil
+    
+    @State private var showingPhotoSource = false
+    @State private var showingReceiptSource = false
+    @State private var showingPhotoCamera = false
+    @State private var showingPhotoLibrary = false
+    @State private var showingReceiptCamera = false
+    @State private var showingReceiptLibrary = false
+    
+    @State private var isSubmitting = false
+    @State private var alertTitle = ""
+    @State private var alertMessage = ""
+    @State private var showingAlert = false
+
+    init(dashboard: IssueDashboard, products: [SalesProduct], associateID: String, storeID: String) {
         self.dashboard = dashboard
         self.products = products
+        self.associateID = associateID
+        self.storeID = storeID
         _selectedIssueTypeID = State(initialValue: dashboard.issueTypes.first?.id ?? "missing")
         _selectedRepairDiagnosis = State(initialValue: dashboard.repairDiagnosisTypes.first ?? "Inspection pending")
         _selectedRepairServicePrice = State(initialValue: dashboard.repairServicePrices.first ?? "Standard price pending")
         _selectedRepairWarranty = State(initialValue: dashboard.repairWarrantyOptions.first ?? "Warranty check pending")
+        _selectedProductID = State(initialValue: products.first?.id ?? "")
     }
 
     private var selectedIssueType: IssueRequestType {
         dashboard.issueTypes.first(where: { $0.id == selectedIssueTypeID })
         ?? dashboard.issueTypes.first
         ?? IssueRequestType(id: "issue", title: "Issue", icon: "exclamationmark.circle", description: "Send issue details to Store Manager.")
+    }
+
+    private func submitIssue() {
+        guard !selectedProductID.isEmpty else {
+            alertTitle = "Selection Required"
+            alertMessage = "Please select a product before submitting."
+            showingAlert = true
+            return
+        }
+        
+        isSubmitting = true
+        
+        var finalDescription = issueReason
+        if photoFileName != nil || receiptFileName != nil {
+            finalDescription += "\n\n--- Evidence Attached ---"
+            if let photo = photoFileName {
+                finalDescription += "\nPhoto: \(photo)"
+            }
+            if let receipt = receiptFileName {
+                finalDescription += "\nReceipt: \(receipt)"
+            }
+        }
+        
+        Task {
+            do {
+                try await SupabaseDBService.shared.submitExceptionRecord(
+                    productID: selectedProductID,
+                    storeID: storeID,
+                    exceptionType: selectedIssueTypeID,
+                    reportedBy: associateID,
+                    description: finalDescription
+                )
+                
+                await MainActor.run {
+                    isSubmitting = false
+                    alertTitle = "Success"
+                    alertMessage = "Exception record has been submitted to Store Manager successfully!"
+                    showingAlert = true
+                    // Reset fields
+                    issueReason = ""
+                    selectedPhoto = nil
+                    photoFileName = nil
+                    selectedReceipt = nil
+                    receiptFileName = nil
+                }
+            } catch {
+                await MainActor.run {
+                    isSubmitting = false
+                    alertTitle = "Submission Failed"
+                    alertMessage = error.localizedDescription
+                    showingAlert = true
+                }
+            }
+        }
     }
 
     var body: some View {
@@ -46,10 +123,11 @@ struct IssueContent: View {
                     VStack(alignment: .leading, spacing: 18) {
                         IssueModePicker(selectedMode: $selectedMode)
 
-// here are the cases that it direct on the tab that we select
                         switch selectedMode {
                         case .issue:
                             IssueRequestPane(
+                                products: products,
+                                selectedProductID: $selectedProductID,
                                 issueTypes: dashboard.issueTypes,
                                 selectedIssueType: selectedIssueType,
                                 selectedIssueTypeID: $selectedIssueTypeID,
@@ -61,7 +139,19 @@ struct IssueContent: View {
                                 selectedRepairServicePrice: $selectedRepairServicePrice,
                                 selectedRepairWarranty: $selectedRepairWarranty,
                                 sparePartsCost: $sparePartsCost,
-                                labourCharge: $labourCharge
+                                labourCharge: $labourCharge,
+                                selectedPhoto: $selectedPhoto,
+                                photoFileName: $photoFileName,
+                                selectedReceipt: $selectedReceipt,
+                                receiptFileName: $receiptFileName,
+                                showingPhotoSource: $showingPhotoSource,
+                                showingReceiptSource: $showingReceiptSource,
+                                showingPhotoCamera: $showingPhotoCamera,
+                                showingPhotoLibrary: $showingPhotoLibrary,
+                                showingReceiptCamera: $showingReceiptCamera,
+                                showingReceiptLibrary: $showingReceiptLibrary,
+                                isSubmitting: isSubmitting,
+                                onSubmit: submitIssue
                             )
                         case .pastRequests:
                             IssueHistoryPane(items: dashboard.historyItems)
@@ -74,6 +164,23 @@ struct IssueContent: View {
         }
         .scrollIndicators(.hidden)
         .animation(.snappy(duration: 0.24), value: selectedMode)
+        .sheet(isPresented: $showingPhotoCamera) {
+            CameraPicker(selectedImage: $selectedPhoto, fileName: $photoFileName)
+        }
+        .sheet(isPresented: $showingPhotoLibrary) {
+            PhotoPicker(selectedImage: $selectedPhoto, fileName: $photoFileName)
+        }
+        .sheet(isPresented: $showingReceiptCamera) {
+            CameraPicker(selectedImage: $selectedReceipt, fileName: $receiptFileName)
+        }
+        .sheet(isPresented: $showingReceiptLibrary) {
+            PhotoPicker(selectedImage: $selectedReceipt, fileName: $receiptFileName)
+        }
+        .alert(alertTitle, isPresented: $showingAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(alertMessage)
+        }
     }
 }
 
@@ -122,6 +229,8 @@ private struct IssueModePicker: View {
 
 // this is for returnexchanghe part
 private struct IssueRequestPane: View {
+    let products: [SalesProduct]
+    @Binding var selectedProductID: String
     let issueTypes: [IssueRequestType]
     let selectedIssueType: IssueRequestType
     @Binding var selectedIssueTypeID: String
@@ -134,6 +243,21 @@ private struct IssueRequestPane: View {
     @Binding var selectedRepairWarranty: String
     @Binding var sparePartsCost: String
     @Binding var labourCharge: String
+    
+    @Binding var selectedPhoto: UIImage?
+    @Binding var photoFileName: String?
+    @Binding var selectedReceipt: UIImage?
+    @Binding var receiptFileName: String?
+    
+    @Binding var showingPhotoSource: Bool
+    @Binding var showingReceiptSource: Bool
+    @Binding var showingPhotoCamera: Bool
+    @Binding var showingPhotoLibrary: Bool
+    @Binding var showingReceiptCamera: Bool
+    @Binding var showingReceiptLibrary: Bool
+    
+    let isSubmitting: Bool
+    let onSubmit: () -> Void
 
     private var isRepairSelected: Bool {
         selectedIssueType.id == "repair"
@@ -160,6 +284,12 @@ private struct IssueRequestPane: View {
                 badge: "SM route"
             )
 
+            // Select product dropdown selector
+            IssueProductDropdown(
+                products: products,
+                selectedProductID: $selectedProductID
+            )
+
             IssueRequestTypeDropdown(
                 issueTypes: issueTypes,
                 selectedIssueTypeID: $selectedIssueTypeID,
@@ -167,8 +297,83 @@ private struct IssueRequestPane: View {
             )
 
             HStack(alignment: .top, spacing: 14) {
-                IssueEvidenceButton(title: "Photo", subtitle: "Add product or issue proof", icon: "camera")
-                IssueEvidenceButton(title: "Receipt", subtitle: "Attach purchase or service receipt", icon: "doc.text")
+                // Photo button / preview
+                Button {
+                    showingPhotoSource = true
+                } label: {
+                    VStack {
+                        if let photo = selectedPhoto {
+                            Image(uiImage: photo)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(height: 120)
+                                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                                .overlay(
+                                    Image(systemName: "camera.circle.fill")
+                                        .font(.title)
+                                        .foregroundStyle(.white)
+                                        .shadow(radius: 3)
+                                        .padding(8),
+                                    alignment: .topTrailing
+                                )
+                        } else {
+                            IssueEvidenceButton(title: "Photo", subtitle: "Add product or issue proof", icon: "camera")
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .confirmationDialog("Choose Photo Source", isPresented: $showingPhotoSource, titleVisibility: .visible) {
+                    Button("Take Photo") {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                            showingPhotoCamera = true
+                        }
+                    }
+                    Button("Choose from Library") {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                            showingPhotoLibrary = true
+                        }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                }
+
+                // Receipt button / preview
+                Button {
+                    showingReceiptSource = true
+                } label: {
+                    VStack {
+                        if let receipt = selectedReceipt {
+                            Image(uiImage: receipt)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(height: 120)
+                                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                                .overlay(
+                                    Image(systemName: "doc.circle.fill")
+                                        .font(.title)
+                                        .foregroundStyle(.white)
+                                        .shadow(radius: 3)
+                                        .padding(8),
+                                    alignment: .topTrailing
+                                )
+                        } else {
+                            IssueEvidenceButton(title: "Receipt", subtitle: "Attach purchase or service receipt", icon: "doc.text")
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .confirmationDialog("Choose Receipt Source", isPresented: $showingReceiptSource, titleVisibility: .visible) {
+                    Button("Take Photo") {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                            showingReceiptCamera = true
+                        }
+                    }
+                    Button("Choose from Library") {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                            showingReceiptLibrary = true
+                        }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                }
             }
 
             IssueTextArea(
@@ -197,7 +402,17 @@ private struct IssueRequestPane: View {
                 subtitle: "Sales Associate captures evidence and reason. Store Manager reviews approval, rejection, or next action."
             )
 
-            IssuePrimaryButton(title: "Submit to SM", icon: "paperplane")
+            if isSubmitting {
+                HStack {
+                    Spacer()
+                    ProgressView()
+                        .tint(Theme.gold)
+                    Spacer()
+                }
+                .padding(.vertical, 10)
+            } else {
+                IssuePrimaryButton(title: "Submit to SM", icon: "paperplane", action: onSubmit)
+            }
         }
     }
 }
@@ -624,10 +839,10 @@ private struct IssueGuidanceBanner: View {
 private struct IssuePrimaryButton: View {
     let title: String
     let icon: String
+    let action: () -> Void
 
     var body: some View {
-        Button {
-        } label: {
+        Button(action: action) {
             Label(title, systemImage: icon)
                 .font(.headline.weight(.black))
                 .frame(maxWidth: .infinity, minHeight: 56)
@@ -710,3 +925,163 @@ private extension IssueApprovalStatus {
         }
     }
 }
+
+private struct IssueProductDropdown: View {
+    let products: [SalesProduct]
+    @Binding var selectedProductID: String
+
+    private var selectedProduct: SalesProduct? {
+        products.first(where: { $0.id == selectedProductID })
+    }
+
+    var body: some View {
+        Menu {
+            ForEach(products) { product in
+                Button {
+                    selectedProductID = product.id
+                } label: {
+                    Text("\(product.name) (\(product.brand))")
+                }
+            }
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: "tag")
+                    .font(.title3.weight(.black))
+                    .foregroundStyle(Theme.gold)
+                    .frame(width: 48, height: 48)
+                    .background(Theme.selected, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("SELECT PRODUCT")
+                        .font(.caption.weight(.black))
+                        .foregroundStyle(Theme.muted)
+                    if let product = selectedProduct {
+                        Text(product.name)
+                            .font(.title3.weight(.black))
+                            .foregroundStyle(Theme.ink)
+                            .lineLimit(1)
+                        Text(product.brand)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Theme.muted)
+                            .lineLimit(1)
+                    } else {
+                        Text("Choose Product")
+                            .font(.title3.weight(.black))
+                            .foregroundStyle(Theme.muted)
+                    }
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.down")
+                    .font(.headline.weight(.black))
+                    .foregroundStyle(Theme.gold)
+                    .frame(width: 38, height: 38)
+                    .background(.white.opacity(0.72), in: Circle())
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, minHeight: 84)
+            .background(.white.opacity(0.66), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .stroke(Theme.line.opacity(0.55), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+import PhotosUI
+
+struct PhotoPicker: UIViewControllerRepresentable {
+    @Binding var selectedImage: UIImage?
+    @Binding var fileName: String?
+
+    @Environment(\.dismiss) private var dismiss
+
+    class Coordinator: NSObject, PHPickerViewControllerDelegate {
+        let parent: PhotoPicker
+
+        init(_ parent: PhotoPicker) {
+            self.parent = parent
+        }
+
+        func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+            parent.dismiss()
+            
+            guard let provider = results.first?.itemProvider, provider.canLoadObject(ofClass: UIImage.self) else {
+                return
+            }
+            
+            provider.loadObject(ofClass: UIImage.self) { [weak self] image, error in
+                if let image = image as? UIImage {
+                    DispatchQueue.main.async {
+                        self?.parent.selectedImage = image
+                        self?.parent.fileName = "image_\(Int(Date().timeIntervalSince1970)).jpg"
+                    }
+                }
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeUIViewController(context: Context) -> PHPickerViewController {
+        var config = PHPickerConfiguration()
+        config.filter = .images
+        config.selectionLimit = 1
+        
+        let picker = PHPickerViewController(configuration: config)
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: PHPickerViewController, context: Context) {}
+}
+
+struct CameraPicker: UIViewControllerRepresentable {
+    @Binding var selectedImage: UIImage?
+    @Binding var fileName: String?
+
+    @Environment(\.dismiss) private var dismiss
+
+    class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        let parent: CameraPicker
+
+        init(_ parent: CameraPicker) {
+            self.parent = parent
+        }
+
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]) {
+            if let image = info[.originalImage] as? UIImage {
+                parent.selectedImage = image
+                parent.fileName = "image_\(Int(Date().timeIntervalSince1970)).jpg"
+            }
+            parent.dismiss()
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            parent.dismiss()
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.delegate = context.coordinator
+        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+            picker.sourceType = .camera
+        } else {
+            picker.sourceType = .photoLibrary
+        }
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+}
+

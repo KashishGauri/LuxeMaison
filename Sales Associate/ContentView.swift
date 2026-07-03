@@ -22,6 +22,7 @@ struct SalesAssociateRootView: View {
     @State private var appointments: [DBAppointment] = []
     @State private var dailyTasks: [DBDailyTask] = []
     @State private var sales: [DBSale] = []
+    @State private var activeStoreID: String = "mock-store"
     @State private var dynamicSalesGoal: SalesGoal? = nil
     @State private var dynamicWeeklySales: WeeklySalesSummary? = nil
     @State private var dynamicMetrics: [DashboardMetric]? = nil
@@ -116,6 +117,7 @@ struct SalesAssociateRootView: View {
                 issueDashboard: issueDashboard,
                 dailyTasks: $dailyTasks,
                 sales: $sales,
+                activeStoreID: activeStoreID,
                 selectedTab: $selectedTab,
                 navigationMode: $navigationMode,
                 recentlyViewedClients: $recentlyViewedClients,
@@ -129,7 +131,22 @@ struct SalesAssociateRootView: View {
                 await loadAppointments()
                 await loadSalesAndGoal()
                 await loadProductsFromDB()
+                await loadActiveStoreID()
             }
+        }
+    }
+
+    private func loadActiveStoreID() async {
+        do {
+            let shifts = try await SupabaseDBService.shared.fetchShifts(for: loggedInDashboard.associate.id)
+            if let firstShift = shifts.first {
+                await MainActor.run {
+                    self.activeStoreID = firstShift.storeID
+                    print("Supabase Sync: Active store ID loaded: \(self.activeStoreID)")
+                }
+            }
+        } catch {
+            print("Supabase Sync Shifts ERROR: \(error)")
         }
     }
 
@@ -406,6 +423,7 @@ struct TodayDashboardView: View {
     let issueDashboard: IssueDashboard
     @Binding var dailyTasks: [DBDailyTask]
     @Binding var sales: [DBSale]
+    let activeStoreID: String
 
     @Binding var selectedTab: SalesAssociateTab
     @Binding var navigationMode: SalesNavigationMode
@@ -525,7 +543,12 @@ struct TodayDashboardView: View {
         case .stock:
             StockContent(dashboard: stockDashboard, products: products)
         case .issue:
-            IssueContent(dashboard: issueDashboard, products: products)
+            IssueContent(
+                dashboard: issueDashboard,
+                products: products,
+                associateID: dashboard.associate.id,
+                storeID: activeStoreID
+            )
         }
     }
 

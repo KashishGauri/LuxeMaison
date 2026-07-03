@@ -329,6 +329,44 @@ class SupabaseDBService {
         }
     }
 
+    /// Submits a new exception record to Supabase ExceptionRecord table.
+    func submitExceptionRecord(productID: String, storeID: String, exceptionType: String, reportedBy: String, description: String?) async throws {
+        guard let url = URL(string: "\(baseURL)/ExceptionRecord") else {
+            throw URLError(.badURL)
+        }
+        
+        let record = DBExceptionRecordInsert(
+            productID: productID,
+            storeID: storeID,
+            exceptionType: exceptionType,
+            reportedBy: reportedBy,
+            description: description,
+            status: "pending"
+        )
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        
+        let token = UserDefaults.standard.string(forKey: "active_session_access_token") ?? anonKey
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        
+        let encoder = JSONEncoder()
+        request.httpBody = try encoder.encode(record)
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+        
+        if !(200...299).contains(httpResponse.statusCode) {
+            let bodyString = String(data: data, encoding: .utf8) ?? ""
+            print("Submit Exception Error response (\(httpResponse.statusCode)): \(bodyString)")
+            throw URLError(.badServerResponse)
+        }
+    }
+
     /// Updates an appointment's status in Supabase.
     func updateAppointmentStatus(appointmentId: String, status: String) async {
         let token = UserDefaults.standard.string(forKey: "active_session_access_token") ?? anonKey
@@ -927,5 +965,14 @@ struct DBStoreInventory: Codable {
     let productid: String
     var currentquantity: Int
     let thresholdquantity: Int?
+}
+
+struct DBExceptionRecordInsert: Codable {
+    let productID: String
+    let storeID: String
+    let exceptionType: String
+    let reportedBy: String
+    let description: String?
+    let status: String
 }
 
