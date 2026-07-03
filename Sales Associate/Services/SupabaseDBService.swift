@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 class SupabaseDBService {
     static let shared = SupabaseDBService()
@@ -330,7 +331,15 @@ class SupabaseDBService {
     }
 
     /// Submits a new exception record to Supabase ExceptionRecord table.
-    func submitExceptionRecord(productID: String, storeID: String, exceptionType: String, reportedBy: String, description: String?) async throws {
+    func submitExceptionRecord(
+        productID: String,
+        storeID: String,
+        exceptionType: String,
+        reportedBy: String,
+        description: String?,
+        varianceInQuantity: Int? = nil,
+        damagedImageURL: String
+    ) async throws {
         guard let url = URL(string: "\(baseURL)/ExceptionRecord") else {
             throw URLError(.badURL)
         }
@@ -341,16 +350,16 @@ class SupabaseDBService {
             exceptionType: exceptionType,
             reportedBy: reportedBy,
             description: description,
-            status: "pending"
+            status: "pending",
+            varianceInQuantity: varianceInQuantity,
+            damagedImageURL: damagedImageURL
         )
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(anonKey, forHTTPHeaderField: "apikey")
-        
-        let token = UserDefaults.standard.string(forKey: "active_session_access_token") ?? anonKey
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
         
         let encoder = JSONEncoder()
         request.httpBody = try encoder.encode(record)
@@ -365,6 +374,117 @@ class SupabaseDBService {
             print("Submit Exception Error response (\(httpResponse.statusCode)): \(bodyString)")
             throw URLError(.badServerResponse)
         }
+    }
+
+    /// Uploads an image to Supabase Storage bucket and returns the file path.
+    func uploadImage(_ image: UIImage, toBucket bucket: String, fileName: String) async throws -> String {
+        guard let url = URL(string: "https://zfengirsvsjikrhxrfit.supabase.co/storage/v1/object/\(bucket)/\(fileName)") else {
+            throw URLError(.badURL)
+        }
+        
+        guard let imageData = image.jpegData(compressionQuality: 0.8) else {
+            throw NSError(domain: "ImageConversionError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to convert image to JPEG data"])
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
+        request.httpBody = imageData
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+        
+        if !(200...299).contains(httpResponse.statusCode) {
+            let bodyString = String(data: data, encoding: .utf8) ?? ""
+            print("Upload Image Error response (\(httpResponse.statusCode)): \(bodyString)")
+            throw URLError(.badServerResponse)
+        }
+        
+        return "\(bucket)/\(fileName)"
+    }
+
+    /// Submits a stock request to the SalesAssociateStockRequest table.
+    func submitStockRequest(
+        productID: String,
+        storeID: String,
+        reportedBy: String,
+        quantity: Int,
+        urgency: String
+    ) async throws {
+        guard let url = URL(string: "\(baseURL)/SalesAssociateStockRequest") else {
+            throw URLError(.badURL)
+        }
+        
+        let record = DBSalesAssociateStockRequestInsert(
+            productID: productID,
+            storeID: storeID,
+            requestedBy: reportedBy,
+            quantityRequested: quantity,
+            urgency: urgency,
+            status: "pending"
+        )
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        
+        let encoder = JSONEncoder()
+        request.httpBody = try encoder.encode(record)
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+        
+        if !(200...299).contains(httpResponse.statusCode) {
+            let bodyString = String(data: data, encoding: .utf8) ?? ""
+            print("Submit Stock Request Error response (\(httpResponse.statusCode)): \(bodyString)")
+            throw URLError(.badServerResponse)
+        }
+    }
+
+    /// Fetches exception records for a specific sales associate.
+    func fetchExceptionRecords(for reportedBy: String) async throws -> [DBExceptionRecord] {
+        guard let url = URL(string: "\(baseURL)/ExceptionRecord?reportedBy=eq.\(reportedBy)&select=*") else {
+            throw URLError(.badURL)
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+        
+        return try JSONDecoder().decode([DBExceptionRecord].self, from: data)
+    }
+
+    /// Fetches stock requests for a specific sales associate.
+    func fetchStockRequests(for reportedBy: String) async throws -> [DBSalesAssociateStockRequest] {
+        guard let url = URL(string: "\(baseURL)/SalesAssociateStockRequest?requestedby=eq.\(reportedBy)&select=*") else {
+            throw URLError(.badURL)
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+        
+        return try JSONDecoder().decode([DBSalesAssociateStockRequest].self, from: data)
     }
 
     /// Updates an appointment's status in Supabase.
@@ -1154,5 +1274,73 @@ struct DBExceptionRecordInsert: Codable {
     let reportedBy: String
     let description: String?
     let status: String
+    let varianceInQuantity: Int?
+    let damagedImageURL: String
+    
+    enum CodingKeys: String, CodingKey {
+        case productID, storeID, exceptionType, reportedBy, description, status, varianceInQuantity
+        case damagedImageURL = "damaged_image_url"
+    }
 }
+
+struct DBExceptionRecord: Codable, Identifiable {
+    let id: String
+    let productID: String
+    let storeID: String
+    let exceptionType: String
+    let reportedBy: String
+    let description: String?
+    let status: String
+    let varianceInQuantity: Int?
+    let damagedImageURL: String?
+    let createdAt: String
+    
+    enum CodingKeys: String, CodingKey {
+        case id, productID, storeID, exceptionType, reportedBy, description, status, varianceInQuantity
+        case damagedImageURL = "damaged_image_url"
+        case createdAt = "createdAt"
+    }
+}
+
+struct DBSalesAssociateStockRequestInsert: Codable {
+    let productID: String
+    let storeID: String
+    let requestedBy: String
+    let quantityRequested: Int
+    let urgency: String
+    let status: String
+    
+    enum CodingKeys: String, CodingKey {
+        case productID = "productid"
+        case storeID = "storeid"
+        case requestedBy = "requestedby"
+        case quantityRequested = "quantityrequested"
+        case urgency
+        case status
+    }
+}
+
+struct DBSalesAssociateStockRequest: Codable, Identifiable {
+    let id: String
+    let productID: String
+    let storeID: String
+    let requestedBy: String
+    let quantityRequested: Int
+    let urgency: String
+    let status: String
+    let createdAt: String
+    
+    enum CodingKeys: String, CodingKey {
+        case id
+        case productID = "productid"
+        case storeID = "storeid"
+        case requestedBy = "requestedby"
+        case quantityRequested = "quantityrequested"
+        case urgency
+        case status
+        case createdAt = "createdat"
+    }
+}
+
+
 

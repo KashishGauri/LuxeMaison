@@ -555,7 +555,12 @@ struct TodayDashboardView: View {
                 }
             )
         case .stock:
-            StockContent(dashboard: stockDashboard, products: products)
+            StockContent(
+                dashboard: stockDashboard,
+                products: products,
+                associateID: dashboard.associate.id,
+                storeID: activeStoreID
+            )
         case .issue:
             IssueContent(
                 dashboard: issueDashboard,

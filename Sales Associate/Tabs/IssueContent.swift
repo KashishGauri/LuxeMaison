@@ -88,7 +88,8 @@ struct IssueContent: View {
                     storeID: storeID,
                     exceptionType: selectedIssueTypeID,
                     reportedBy: associateID,
-                    description: finalDescription
+                    description: finalDescription,
+                    damagedImageURL: ""
                 )
                 
                 await MainActor.run {
