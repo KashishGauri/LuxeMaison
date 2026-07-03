@@ -1040,6 +1040,111 @@ class SupabaseDBService {
             throw URLError(.badServerResponse)
         }
     }
+    
+    /// Fetches a receipt by its invoice number from Supabase.
+    func fetchReceipt(byInvoiceNumber invoiceNumber: String) async throws -> DBReceipt? {
+        guard let encodedInvoice = invoiceNumber.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "\(baseURL)/receipt?invoiceNumber=eq.\(encodedInvoice)&select=*") else {
+            throw URLError(.badURL)
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            return nil
+        }
+        
+        let receipts = try JSONDecoder().decode([DBReceipt].self, from: data)
+        return receipts.first
+    }
+    
+    /// Fetches receipt items by saleID.
+    func fetchSalesItems(forSaleID saleID: String) async throws -> [DBSalesItem] {
+        guard let url = URL(string: "\(baseURL)/SalesItem?saleID=eq.\(saleID)&select=*") else {
+            throw URLError(.badURL)
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            return []
+        }
+        
+        return try JSONDecoder().decode([DBSalesItem].self, from: data)
+    }
+    
+    /// Submits a new After-Sale support request to the AfterSaleRequest table.
+    func submitAfterSaleRequest(
+        receiptID: String,
+        productID: String,
+        requestType: String,
+        reportedBy: String,
+        storeID: String,
+        notes: String?,
+        imageUrl: String?
+    ) async throws {
+        guard let url = URL(string: "\(baseURL)/AfterSaleRequest") else {
+            throw URLError(.badURL)
+        }
+        
+        let record = DBAfterSaleRequestInsert(
+            receiptID: receiptID,
+            productID: productID,
+            requestType: requestType,
+            status: "pending",
+            notes: notes,
+            imageUrl: imageUrl,
+            reportedBy: reportedBy,
+            storeID: storeID
+        )
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        
+        let encoder = JSONEncoder()
+        request.httpBody = try encoder.encode(record)
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+        
+        if !(200...299).contains(httpResponse.statusCode) {
+            let bodyString = String(data: data, encoding: .utf8) ?? ""
+            print("Submit AfterSaleRequest Error response (\(httpResponse.statusCode)): \(bodyString)")
+            throw URLError(.badServerResponse)
+        }
+    }
+    
+    /// Fetches after sale requests reported by a specific sales associate.
+    func fetchAfterSaleRequests(for reportedBy: String) async throws -> [DBAfterSaleRequest] {
+        guard let url = URL(string: "\(baseURL)/AfterSaleRequest?reportedBy=eq.\(reportedBy)&select=*") else {
+            throw URLError(.badURL)
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            return []
+        }
+        
+        return try JSONDecoder().decode([DBAfterSaleRequest].self, from: data)
+    }
 }
 
 struct DBAppointment: Codable, Identifiable {
@@ -1340,6 +1445,87 @@ struct DBSalesAssociateStockRequest: Codable, Identifiable {
         case status
         case createdAt = "createdat"
     }
+}
+
+struct DBReceipt: Codable, Identifiable {
+    var id: String { receiptID }
+    let receiptID: String
+    let saleID: String?
+    let invoiceNumber: String?
+    let salesAssociateID: String?
+    let storeID: String?
+    let paymentMethod: String?
+    let paymentReference: String?
+    let preTaxAmount: Double?
+    let taxAmount: Double?
+    let totalAmount: Double?
+    let amountPaid: Double?
+    let Currency: String?
+    let itemCount: Int?
+    let receiptDate: String?
+    let time: String?
+    let createdAt: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case receiptID = "receipt_id"
+        case saleID = "saleID"
+        case invoiceNumber = "invoiceNumber"
+        case salesAssociateID = "salesAssociateID"
+        case storeID = "storeID"
+        case paymentMethod = "paymentMethod"
+        case paymentReference = "paymentReference"
+        case preTaxAmount = "preTaxAmount"
+        case taxAmount = "taxAmount"
+        case totalAmount = "totalAmount"
+        case amountPaid = "amountPaid"
+        case Currency = "Currency"
+        case itemCount = "itemCount"
+        case receiptDate = "receiptDate"
+        case time = "time"
+        case createdAt = "createdAt"
+    }
+}
+
+struct DBSalesItem: Codable {
+    let saleID: String
+    let productID: String
+    let quantity: Int
+    let unitPrice: Double
+    let subTotal: Double
+    let time: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case saleID = "saleID"
+        case productID = "productID"
+        case quantity = "quantity"
+        case unitPrice = "unitPrice"
+        case subTotal = "subTotal"
+        case time = "time"
+    }
+}
+
+struct DBAfterSaleRequestInsert: Codable {
+    let receiptID: String
+    let productID: String
+    let requestType: String
+    let status: String
+    let notes: String?
+    let imageUrl: String?
+    let reportedBy: String
+    let storeID: String
+}
+
+struct DBAfterSaleRequest: Codable, Identifiable {
+    let id: String
+    let receiptID: String
+    let productID: String
+    let requestType: String
+    let status: String
+    let notes: String?
+    let imageUrl: String?
+    let reportedBy: String
+    let storeID: String
+    let createdAt: String
 }
 
 

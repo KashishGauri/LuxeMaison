@@ -565,6 +565,7 @@ struct TodayDashboardView: View {
             IssueContent(
                 dashboard: issueDashboard,
                 products: products,
+                clientProfiles: clientProfiles,
                 associateID: dashboard.associate.id,
                 storeID: activeStoreID
             )
@@ -776,7 +777,7 @@ enum SalesAssociateTab: String, CaseIterable, Identifiable {
     case client = "Clienteling"
     case sell = "Billing"
     case stock = "Stock"
-    case issue = "Issue"
+    case issue = "After Sale"
 
     var id: String { rawValue }
 
@@ -791,7 +792,7 @@ enum SalesAssociateTab: String, CaseIterable, Identifiable {
         case .stock:
             return "shippingbox"
         case .issue:
-            return "list.clipboard"
+            return "wrench.and.screwdriver"
         }
     }
 

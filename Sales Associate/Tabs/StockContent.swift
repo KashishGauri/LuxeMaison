@@ -645,117 +645,7 @@ private struct StockReceivingIssuePane: View {
             }
             
             // Form Fields based on tab
-            if selectedTab == "customer_request" {
-                HStack(spacing: 16) {
-                    // Urgency
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Urgency*")
-                            .font(.headline.weight(.black))
-                            .foregroundStyle(Theme.ink)
-                        
-                        Menu {
-                            Button("Normal") { selectedVariantOption = "Normal" }
-                            Button("Emergency") { selectedVariantOption = "Emergency" }
-                        } label: {
-                            HStack {
-                                Text(selectedVariantOption)
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(Theme.ink)
-                                Spacer()
-                                Image(systemName: "chevron.down")
-                                    .font(.system(size: 12, weight: .bold))
-                                    .foregroundStyle(Theme.gold)
-                            }
-                            .padding(.horizontal, 14)
-                            .frame(height: 52)
-                            .background(Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                    .stroke(Theme.line.opacity(0.5), lineWidth: 1)
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .frame(maxWidth: .infinity)
-                    
-                    // Quantity
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Quantity*")
-                            .font(.headline.weight(.black))
-                            .foregroundStyle(Theme.ink)
-                        
-                        TextField("Enter quantity", text: $expectedQuantityText)
-                            .font(.subheadline.weight(.semibold))
-                            .keyboardType(.numberPad)
-                            .padding(.horizontal, 14)
-                            .frame(height: 52)
-                            .background(Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                    .stroke(Theme.line.opacity(0.5), lineWidth: 1)
-                            )
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-            } else if selectedTab == "missing" {
-                HStack(spacing: 16) {
-                    // Expected Quantity
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Expected Quantity*")
-                            .font(.headline.weight(.black))
-                            .foregroundStyle(Theme.ink)
-                        
-                        TextField("Enter expected quantity", text: $expectedQuantityText)
-                            .font(.subheadline.weight(.semibold))
-                            .keyboardType(.numberPad)
-                            .padding(.horizontal, 14)
-                            .frame(height: 52)
-                            .background(Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                    .stroke(Theme.line.opacity(0.5), lineWidth: 1)
-                            )
-                    }
-                    .frame(maxWidth: .infinity)
-                    
-                    // Received Quantity (Required)
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Received Quantity*")
-                            .font(.headline.weight(.black))
-                            .foregroundStyle(Theme.ink)
-                        
-                        TextField("Enter received quantity", text: $receivedQuantityText)
-                            .font(.subheadline.weight(.semibold))
-                            .keyboardType(.numberPad)
-                            .padding(.horizontal, 14)
-                            .frame(height: 52)
-                            .background(Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                    .stroke(Theme.line.opacity(0.5), lineWidth: 1)
-                            )
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-            } else if selectedTab == "damaged" {
-                // Damaged count (Received Quantity and Variant are hidden)
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Damaged Products*")
-                        .font(.headline.weight(.black))
-                        .foregroundStyle(Theme.ink)
-                    
-                    TextField("Enter quantity", text: $expectedQuantityText)
-                        .font(.subheadline.weight(.semibold))
-                        .keyboardType(.numberPad)
-                        .padding(.horizontal, 14)
-                        .frame(height: 52)
-                        .background(Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .stroke(Theme.line.opacity(0.5), lineWidth: 1)
-                        )
-                }
-            }
+            tabSpecificFormFields
             
             // Photos (hidden on missing and customer_request; required on damaged)
             if selectedTab != "missing" && selectedTab != "customer_request" {
@@ -895,6 +785,136 @@ private struct StockReceivingIssuePane: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(alertMessage)
+        }
+    }
+    
+    @ViewBuilder
+    private var tabSpecificFormFields: some View {
+        if selectedTab == "customer_request" {
+            customerRequestFields
+        } else if selectedTab == "missing" {
+            missingFields
+        } else if selectedTab == "damaged" {
+            damagedFields
+        }
+    }
+    
+    @ViewBuilder
+    private var customerRequestFields: some View {
+        HStack(spacing: 16) {
+            // Urgency
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Urgency*")
+                    .font(.headline.weight(.black))
+                    .foregroundStyle(Theme.ink)
+                
+                Menu {
+                    Button("Normal") { selectedVariantOption = "Normal" }
+                    Button("Emergency") { selectedVariantOption = "Emergency" }
+                } label: {
+                    HStack {
+                        Text(selectedVariantOption)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Theme.ink)
+                        Spacer()
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(Theme.gold)
+                    }
+                    .padding(.horizontal, 14)
+                    .frame(height: 52)
+                    .background(Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(Theme.line.opacity(0.5), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+            .frame(maxWidth: .infinity)
+            
+            // Quantity
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Quantity*")
+                    .font(.headline.weight(.black))
+                    .foregroundStyle(Theme.ink)
+                
+                TextField("Enter quantity", text: $expectedQuantityText)
+                    .font(.subheadline.weight(.semibold))
+                    .keyboardType(.numberPad)
+                    .padding(.horizontal, 14)
+                    .frame(height: 52)
+                    .background(Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(Theme.line.opacity(0.5), lineWidth: 1)
+                    )
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+    
+    @ViewBuilder
+    private var missingFields: some View {
+        HStack(spacing: 16) {
+            // Expected Quantity
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Expected Quantity*")
+                    .font(.headline.weight(.black))
+                    .foregroundStyle(Theme.ink)
+                
+                TextField("Enter expected quantity", text: $expectedQuantityText)
+                    .font(.subheadline.weight(.semibold))
+                    .keyboardType(.numberPad)
+                    .padding(.horizontal, 14)
+                    .frame(height: 52)
+                    .background(Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(Theme.line.opacity(0.5), lineWidth: 1)
+                    )
+            }
+            .frame(maxWidth: .infinity)
+            
+            // Received Quantity (Required)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Received Quantity*")
+                    .font(.headline.weight(.black))
+                    .foregroundStyle(Theme.ink)
+                
+                TextField("Enter received quantity", text: $receivedQuantityText)
+                    .font(.subheadline.weight(.semibold))
+                    .keyboardType(.numberPad)
+                    .padding(.horizontal, 14)
+                    .frame(height: 52)
+                    .background(Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(Theme.line.opacity(0.5), lineWidth: 1)
+                    )
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+    
+    @ViewBuilder
+    private var damagedFields: some View {
+        // Damaged count (Received Quantity and Variant are hidden)
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Damaged Products*")
+                .font(.headline.weight(.black))
+                .foregroundStyle(Theme.ink)
+            
+            TextField("Enter quantity", text: $expectedQuantityText)
+                .font(.subheadline.weight(.semibold))
+                .keyboardType(.numberPad)
+                .padding(.horizontal, 14)
+                .frame(height: 52)
+                .background(Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Theme.line.opacity(0.5), lineWidth: 1)
+                )
         }
     }
 }
