@@ -100,10 +100,15 @@ extension IssueDashboard {
 }
 
 extension ProductCategory {
+    // Mirrors the Supabase `productcategory` enum (public schema). Kept in the same
+    // order the enum lists them. `id` is the lowercased enum value so it matches the
+    // categoryID assigned to products in `normalizeCategoryID`.
     static let sampleCategories: [ProductCategory] = [
-        ProductCategory(id: "handbags", title: "Handbags", icon: "handbag"),
+        ProductCategory(id: "handbags", title: "Handbags", icon: "handbag.fill"),
+        ProductCategory(id: "fragrances", title: "Fragrances", icon: "wind.snow"),
+        ProductCategory(id: "accessories", title: "Accessories", icon: "sunglasses.fill"),
+        ProductCategory(id: "jewellery", title: "Jewellery", icon: "bag"),
         ProductCategory(id: "watches", title: "Watches", icon: "applewatch"),
-        ProductCategory(id: "fragrances", title: "Fragrances", icon: "wind"),
-        ProductCategory(id: "footwear", title: "Footwear", icon: "shoeprints.fill")
+        ProductCategory(id: "footware", title: "Footware", icon: "shoe.fill")
     ]
 }
