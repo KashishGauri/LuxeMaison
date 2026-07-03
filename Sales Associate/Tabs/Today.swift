@@ -208,7 +208,7 @@ private struct PriorityQueueCard: View {
                     PriorityRow(item: item)
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: 150, alignment: .top)
+            .frame(maxWidth: .infinity, minHeight: 100, alignment: .top)
         }
     }
 }
@@ -241,10 +241,6 @@ private struct PriorityRow: View {
                     .padding(.horizontal, 13)
                     .padding(.vertical, 8)
                     .background(Theme.selected, in: Capsule())
-            } else {
-                Image(systemName: "chevron.right")
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(Theme.muted.opacity(0.72))
             }
         }
         .padding(.vertical, 2)

@@ -197,66 +197,6 @@ struct LoginView: View {
                     )
                     .padding(.horizontal, 24)
                     
-                    // Demo Accounts Quick Path
-                    VStack(spacing: 16) {
-                        HStack {
-                            Rectangle()
-                                .fill(Theme.gold.opacity(0.2))
-                                .frame(height: 1)
-                            
-                            Text("DEMO ACCOUNTS QUICK SIGN-IN")
-                                .font(.system(size: 10, weight: .bold))
-                                .tracking(2)
-                                .foregroundStyle(Theme.muted)
-                                .padding(.horizontal, 8)
-                            
-                            Rectangle()
-                                .fill(Theme.gold.opacity(0.2))
-                                .frame(height: 1)
-                        }
-                        .padding(.horizontal, 24)
-                        
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                            ForEach(SalesAssociateDashboard.samples.indices, id: \.self) { index in
-                                let sample = SalesAssociateDashboard.samples[index]
-                                Button(action: {
-                                    fillAndLogin(with: sample)
-                                }) {
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        HStack(spacing: 8) {
-                                            Text(sample.associate.initials)
-                                                .font(.caption2)
-                                                .fontWeight(.bold)
-                                                .foregroundStyle(Theme.gold)
-                                                .frame(width: 28, height: 28)
-                                                .background(Theme.selected, in: Circle())
-                                            
-                                            Text(sample.associate.name.components(separatedBy: " ").first ?? sample.associate.name)
-                                                .font(.system(size: 14, weight: .medium))
-                                                .foregroundStyle(Theme.ink)
-                                        }
-                                        
-                                        Text(sample.associate.boutique)
-                                            .font(.system(size: 11))
-                                            .foregroundStyle(Theme.muted)
-                                            .lineLimit(1)
-                                    }
-                                    .padding(12)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(Color.white.opacity(0.5))
-                                    .cornerRadius(12)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .stroke(Theme.gold.opacity(0.12), lineWidth: 1)
-                                    )
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(.horizontal, 24)
-                    }
-                    .padding(.top, 16)
-                    
                     Spacer(minLength: 24)
                 }
             }
@@ -287,24 +227,6 @@ struct LoginView: View {
             }
             .presentationDetents([.medium])
             .presentationDragIndicator(.visible)
-        }
-    }
-    
-    private func fillAndLogin(with sample: SalesAssociateDashboard) {
-        let cleanEmail = sample.associate.email.lowercased()
-        email = sample.associate.email
-        // Pre-fill password: if they set a custom password, fill that, otherwise default "1234"
-        let savedPassword = UserDefaults.standard.string(forKey: "user_password_\(cleanEmail)")
-        password = savedPassword ?? "1234"
-        errorMessage = nil
-        
-        withAnimation {
-            isLoading = true
-        }
-        
-        // Short delay to simulate authentication animation
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-            handleLogin()
         }
     }
     
@@ -349,29 +271,9 @@ struct LoginView: View {
             }
         }
 
-        // 1. Local static demo accounts: quick sign-in with a manager default
-        //    password (these are not real Supabase Auth users).
-        if let matchingLocal = SalesAssociateDashboard.samples.first(where: { $0.associate.email.lowercased() == cleanEmail }) {
-            let customPassword = UserDefaults.standard.string(forKey: "user_password_\(cleanEmail)")
-            let defaultPasswords = ["1234", "password", "manager", "admin"]
-            let isCorrect = customPassword.map { enteredPassword == $0 }
-                ?? defaultPasswords.contains(enteredPassword.lowercased())
-            guard isCorrect else {
-                withAnimation {
-                    errorMessage = "Invalid password. Please try again."
-                    isLoading = false
-                }
-                return
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                processLogin(with: matchingLocal)
-            }
-            return
-        }
-
-        // 2. Real boutique accounts: verify the password against Supabase Auth.
-        //    The password lives in Supabase (not the User table), so this is the
-        //    only valid check — a wrong/empty password can never sign in.
+        // Verify the password against Supabase Auth. The password lives in Supabase
+        // (not the User table), so this is the only valid check — a wrong/empty
+        // password can never sign in.
         Task {
             do {
                 let dbUser = try await SupabaseDBService.shared.signIn(email: cleanEmail, password: enteredPassword)
