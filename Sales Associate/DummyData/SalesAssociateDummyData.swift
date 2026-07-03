@@ -35,11 +35,11 @@ extension SalesAssociateDashboard {
             QuickAction(icon: "person.badge.plus", title: "Start Client", isPrimary: true),
             QuickAction(icon: "calendar.badge.clock", title: "Appointments", isPrimary: false),
             QuickAction(icon: "checklist", title: "Daily Tasks", isPrimary: false),
+            QuickAction(icon: "camera.viewfinder", title: "Capture Store", isPrimary: false),
             QuickAction(icon: "viewfinder", title: "Scan Item", isPrimary: false)
         ],
         metrics: [
-            DashboardMetric(title: "Open Carts", value: "11"),
-            DashboardMetric(title: "Follow-ups", value: "09")
+            DashboardMetric(title: "Open Carts", value: "11")
         ],
         weeklySales: WeeklySalesSummary(
             total: "Rs. 1.18L",
@@ -97,11 +97,11 @@ extension SalesAssociateDashboard {
                 QuickAction(icon: "person.badge.plus", title: "Start Client", isPrimary: true),
                 QuickAction(icon: "calendar.badge.clock", title: "Appointments", isPrimary: false),
                 QuickAction(icon: "checklist", title: "Daily Tasks", isPrimary: false),
+                QuickAction(icon: "camera.viewfinder", title: "Capture Store", isPrimary: false),
                 QuickAction(icon: "viewfinder", title: "Scan Item", isPrimary: false)
             ],
             metrics: [
-                DashboardMetric(title: "Open Carts", value: "05"),
-                DashboardMetric(title: "Follow-ups", value: "14")
+                DashboardMetric(title: "Open Carts", value: "05")
             ],
             weeklySales: WeeklySalesSummary(
                 total: "Rs. 2.10L",
@@ -156,11 +156,11 @@ extension SalesAssociateDashboard {
                 QuickAction(icon: "person.badge.plus", title: "Start Client", isPrimary: true),
                 QuickAction(icon: "calendar.badge.clock", title: "Appointments", isPrimary: false),
                 QuickAction(icon: "checklist", title: "Daily Tasks", isPrimary: false),
+                QuickAction(icon: "camera.viewfinder", title: "Capture Store", isPrimary: false),
                 QuickAction(icon: "viewfinder", title: "Scan Item", isPrimary: false)
             ],
             metrics: [
-                DashboardMetric(title: "Open Carts", value: "08"),
-                DashboardMetric(title: "Follow-ups", value: "11")
+                DashboardMetric(title: "Open Carts", value: "08")
             ],
             weeklySales: WeeklySalesSummary(
                 total: "Rs. 1.45L",

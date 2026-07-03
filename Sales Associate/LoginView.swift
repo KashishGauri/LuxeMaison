@@ -637,11 +637,11 @@ extension SalesAssociateDashboard {
                 QuickAction(icon: "person.badge.plus", title: "Start Client", isPrimary: true),
                 QuickAction(icon: "calendar.badge.clock", title: "Appointments", isPrimary: false),
                 QuickAction(icon: "checklist", title: "Daily Tasks", isPrimary: false),
+                QuickAction(icon: "camera.viewfinder", title: "Capture Store", isPrimary: false),
                 QuickAction(icon: "viewfinder", title: "Scan Item", isPrimary: false)
             ],
             metrics: [
-                DashboardMetric(title: "Open Carts", value: "00"),
-                DashboardMetric(title: "Follow-ups", value: "00")
+                DashboardMetric(title: "Open Carts", value: "00")
             ],
             weeklySales: WeeklySalesSummary(
                 total: "Rs. 0L",

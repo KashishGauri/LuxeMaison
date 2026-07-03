@@ -8,6 +8,7 @@ struct DashboardContent: View {
     let onShowAppointments: () -> Void
     var onShowNotifications: () -> Void = {}
     let onShowDailyTasks: () -> Void
+    let onShowCaptureStore: () -> Void
     let onShowHandledClients: () -> Void
 
     var body: some View {
@@ -30,6 +31,7 @@ struct DashboardContent: View {
                             onStartClient: onStartClient,
                             onShowAppointments: onShowAppointments,
                             onShowDailyTasks: onShowDailyTasks,
+                            onShowCaptureStore: onShowCaptureStore,
                             onShowHandledClients: onShowHandledClients
                         )
                     }
@@ -294,6 +296,7 @@ private struct QuickActionsCard: View {
     let onStartClient: () -> Void
     let onShowAppointments: () -> Void
     let onShowDailyTasks: () -> Void
+    let onShowCaptureStore: () -> Void
     let onShowHandledClients: () -> Void
 
     private let actionColumns = [
@@ -316,6 +319,8 @@ private struct QuickActionsCard: View {
                                 onShowAppointments()
                             } else if action.title == "Daily Tasks" {
                                 onShowDailyTasks()
+                            } else if action.title == "Capture Store" {
+                                onShowCaptureStore()
                             }
                         }
                     }
@@ -333,7 +338,7 @@ private struct QuickActionsCard: View {
 
                 Spacer(minLength: 0)
             }
-            .frame(height: 436)
+            .frame(height: 480)
         }
     }
 }

@@ -196,11 +196,9 @@ struct SalesAssociateRootView: View {
                 
                 let uniqueClientsCount = Set(sales.compactMap { $0.customerID }).count
                 let openCartsValue = String(format: "%02d", uniqueClientsCount)
-                let followUpsValue = String(format: "%02d", tasks.filter { !$0.isCompleted }.count)
-                
+
                 let metrics = [
-                    DashboardMetric(title: "Open Carts", value: openCartsValue),
-                    DashboardMetric(title: "Follow-ups", value: followUpsValue)
+                    DashboardMetric(title: "Open Carts", value: openCartsValue)
                 ]
                 
                 await MainActor.run {
@@ -254,8 +252,7 @@ struct SalesAssociateRootView: View {
                 ]
                 
                 let metrics = [
-                    DashboardMetric(title: "Open Carts", value: "03"),
-                    DashboardMetric(title: "Follow-ups", value: "02")
+                    DashboardMetric(title: "Open Carts", value: "03")
                 ]
                 
                 await MainActor.run {
@@ -441,6 +438,7 @@ struct TodayDashboardView: View {
     @State private var isNotificationsSheetPresented = false
     @State private var isHandledClientsPresented = false
     @State private var isDailyTasksSheetPresented = false
+    @State private var isCaptureStorePresented = false
     /// Order ids already recorded, so a sale is never written twice (it is recorded
     /// at receipt generation, and Done may fire the same path again).
     @State private var recordedOrderIDs: Set<String> = []
@@ -498,6 +496,9 @@ struct TodayDashboardView: View {
             .sheet(isPresented: $isDailyTasksSheetPresented) {
                 DailyTasksSheet(dailyTasks: $dailyTasks, associateId: dashboard.associate.id)
             }
+            .fullScreenCover(isPresented: $isCaptureStorePresented) {
+                CaptureStoreView(associateID: dashboard.associate.id)
+            }
             .onChange(of: selectedTab) { oldTab, newTab in
                 // If a receipt was generated but the associate left Billing without
                 // tapping Done, close the client session so Billing reopens as a
@@ -521,6 +522,7 @@ struct TodayDashboardView: View {
                 onShowAppointments: { isAppointmentsSheetPresented = true },
                 onShowNotifications: { isNotificationsSheetPresented = true },
                 onShowDailyTasks: { isDailyTasksSheetPresented = true },
+                onShowCaptureStore: { isCaptureStorePresented = true },
                 onShowHandledClients: { isHandledClientsPresented = true }
             )
         case .client:
