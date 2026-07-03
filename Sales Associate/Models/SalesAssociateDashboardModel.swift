@@ -177,10 +177,13 @@ struct ClientProfile: Identifiable, Equatable, Codable {
         self.preferredContactMethod = preferredContactMethod
         self.marketingConsent = marketingConsent
         self.followUpDate = followUpDate
+        // Lifetime spend is the larger of the stored amount and the sum of recorded
+        // purchases, so it always reflects the client's actual purchase history.
+        let historySpend = Self.lifetimeSpend(from: purchaseHistory)
         let resolvedLifetimePurchaseAmount = lifetimePurchaseAmount
             ?? rewardPoints.map { max(0, $0) * 1_000 }
             ?? ClientTier.minimumLifetimeAmount(for: tier)
-        self.lifetimePurchaseAmount = max(0, resolvedLifetimePurchaseAmount)
+        self.lifetimePurchaseAmount = max(0, max(resolvedLifetimePurchaseAmount, historySpend))
         self.rewardPoints = ClientTier.rewardPoints(for: self.lifetimePurchaseAmount)
         self.tier = ClientTier.displayName(for: self.rewardPoints)
         self.boutique = boutique
@@ -192,6 +195,12 @@ struct ClientProfile: Identifiable, Equatable, Codable {
         self.wishlistProductIDs = wishlistProductIDs
         self.defaultDeliveryAddress = defaultDeliveryAddress
         self.deliveryAddressDetail = deliveryAddressDetail
+    }
+
+    /// Total spend (in rupees) recorded across a client's purchase history.
+    /// `grossPaise` is the gross-inclusive line amount (paise) captured at checkout.
+    static func lifetimeSpend(from purchaseHistory: [ClientPurchase]) -> Int {
+        purchaseHistory.reduce(0) { $0 + max(0, $1.grossPaise ?? 0) } / 100
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -234,10 +243,14 @@ struct ClientProfile: Identifiable, Equatable, Codable {
         let storedTier = try container.decodeIfPresent(String.self, forKey: .tier)
         let storedRewardPoints = try container.decodeIfPresent(Int.self, forKey: .rewardPoints)
         let storedLifetimePurchaseAmount = try container.decodeIfPresent(Int.self, forKey: .lifetimePurchaseAmount)
+        // Decode the purchase history first so lifetime spend can include it.
+        let decodedPurchaseHistory = try container.decodeIfPresent([ClientPurchase].self, forKey: .purchaseHistory) ?? []
+        purchaseHistory = decodedPurchaseHistory
+        let historySpend = Self.lifetimeSpend(from: decodedPurchaseHistory)
         let resolvedLifetimePurchaseAmount = storedLifetimePurchaseAmount
             ?? storedRewardPoints.map { max(0, $0) * 1_000 }
             ?? ClientTier.minimumLifetimeAmount(for: storedTier)
-        lifetimePurchaseAmount = max(0, resolvedLifetimePurchaseAmount)
+        lifetimePurchaseAmount = max(0, max(resolvedLifetimePurchaseAmount, historySpend))
         rewardPoints = ClientTier.rewardPoints(for: lifetimePurchaseAmount)
         tier = ClientTier.displayName(for: rewardPoints)
         boutique = try container.decode(String.self, forKey: .boutique)
@@ -255,7 +268,6 @@ struct ClientProfile: Identifiable, Equatable, Codable {
         } else {
             self.tasks = decodedTasks
         }
-        purchaseHistory = try container.decodeIfPresent([ClientPurchase].self, forKey: .purchaseHistory) ?? []
         wishlistProductIDs = try container.decodeIfPresent([String].self, forKey: .wishlistProductIDs) ?? []
         defaultDeliveryAddress = try container.decodeIfPresent(String.self, forKey: .defaultDeliveryAddress)
         deliveryAddressDetail = try container.decodeIfPresent(String.self, forKey: .deliveryAddressDetail)
