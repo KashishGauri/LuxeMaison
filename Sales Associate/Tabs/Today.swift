@@ -10,13 +10,19 @@ struct DashboardContent: View {
     let onShowDailyTasks: () -> Void
     let onShowCaptureStore: () -> Void
     let onShowOpenCarts: () -> Void
+    var onShowProfile: () -> Void = {}
     /// Carts opened today — shown on the Open Carts button.
     var openCartCount: Int = 0
 
     var body: some View {
         ScrollView {
             VStack(spacing: 22) {
-                HeaderBar(reminderCount: reminderCount, onTap: onShowNotifications)
+                HeaderBar(
+                    reminderCount: reminderCount,
+                    onTap: onShowNotifications,
+                    associate: dashboard.associate,
+                    onProfileTap: onShowProfile
+                )
 
                 HStack(alignment: .top, spacing: 18) {
                     VStack(spacing: 18) {
@@ -51,6 +57,8 @@ struct DashboardContent: View {
 private struct HeaderBar: View {
     var reminderCount: Int = 0
     var onTap: () -> Void = {}
+    let associate: AssociateProfile
+    var onProfileTap: () -> Void = {}
 
     var body: some View {
         HStack(alignment: .center) {
@@ -62,28 +70,53 @@ private struct HeaderBar: View {
 
             Spacer()
 
-            // Tapping opens the notifications screen; a badge appears when an
-            // appointment is due within the next 15 minutes (matches the push reminder).
-            Button(action: onTap) {
-                Image(systemName: reminderCount > 0 ? "bell.badge.fill" : "bell")
-                    .font(.title3.weight(.semibold))
-                    .frame(width: 54, height: 54)
-                    .background(.white.opacity(0.76), in: Circle())
-                    .overlay(alignment: .topTrailing) {
-                        if reminderCount > 0 {
-                            Text("\(reminderCount)")
-                                .font(.caption2.weight(.black))
-                                .foregroundStyle(.white)
-                                .padding(5)
-                                .background(Color.red, in: Circle())
-                                .offset(x: 3, y: -3)
+            HStack(spacing: 12) {
+                // Tapping opens the notifications screen; a badge appears when an
+                // appointment is due within the next 15 minutes (matches the push reminder).
+                Button(action: onTap) {
+                    Image(systemName: reminderCount > 0 ? "bell.badge.fill" : "bell")
+                        .font(.title3.weight(.semibold))
+                        .frame(width: 54, height: 54)
+                        .background(.white.opacity(0.76), in: Circle())
+                        .overlay(alignment: .topTrailing) {
+                            if reminderCount > 0 {
+                                Text("\(reminderCount)")
+                                    .font(.caption2.weight(.black))
+                                    .foregroundStyle(.white)
+                                    .padding(5)
+                                    .background(Color.red, in: Circle())
+                                    .offset(x: 3, y: -3)
+                            }
                         }
-                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.ink)
+                .accessibilityLabel(reminderCount > 0 ? "Notifications, \(reminderCount) starting soon" : "Notifications")
+
+                // Sales associate profile — opens the profile sheet.
+                Button(action: onProfileTap) {
+                    Text(associate.initials)
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 54, height: 54)
+                        .background(Theme.goldGradient, in: Circle())
+                        .overlay(Circle().strokeBorder(.white.opacity(0.5), lineWidth: 1))
+                        .shadow(color: .black.opacity(0.14), radius: 4, x: 0, y: 2)
+                }
+                .buttonStyle(ProfileAvatarButtonStyle())
+                .accessibilityLabel("Open sales associate profile, \(associate.name)")
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(Theme.ink)
-            .accessibilityLabel(reminderCount > 0 ? "Notifications, \(reminderCount) starting soon" : "Notifications")
         }
+    }
+}
+
+/// Gives the avatar a native iOS press feel — a gentle dim + shrink with spring.
+private struct ProfileAvatarButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.9 : 1)
+            .opacity(configuration.isPressed ? 0.75 : 1)
+            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: configuration.isPressed)
     }
 }
 

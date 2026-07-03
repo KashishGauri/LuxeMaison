@@ -456,12 +456,8 @@ struct TodayDashboardView: View {
                 case .sidebar:
                     HStack(spacing: 0) {
                         SidebarView(
-                            associate: dashboard.associate,
                             selectedTab: $selectedTab,
-                            navigationMode: $navigationMode,
-                            onProfileTap: {
-                                isAssociateProfilePresented = true
-                            }
+                            navigationMode: $navigationMode
                         )
                         .frame(width: sidebarWidth(for: proxy.size.width))
 
@@ -525,6 +521,7 @@ struct TodayDashboardView: View {
                 onShowDailyTasks: { isDailyTasksSheetPresented = true },
                 onShowCaptureStore: { isCaptureStorePresented = true },
                 onShowOpenCarts: { isOpenCartsPresented = true },
+                onShowProfile: { isAssociateProfilePresented = true },
                 openCartCount: todayOpenCarts.count
             )
         case .client:
@@ -797,11 +794,8 @@ enum SalesAssociateTab: String, CaseIterable, Identifiable {
 
 //Dashboard content view
 private struct SidebarView: View {
-    let associate: AssociateProfile
-
     @Binding var selectedTab: SalesAssociateTab
     @Binding var navigationMode: SalesNavigationMode
-    let onProfileTap: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
@@ -818,11 +812,6 @@ private struct SidebarView: View {
             .padding(.top, 58)
 
             Spacer()
-
-            SidebarAssociateProfileButton(
-                associate: associate,
-                action: onProfileTap
-            )
         }
         .padding(.horizontal, 18)
         .padding(.bottom, 22)
@@ -968,28 +957,6 @@ private struct SidebarItem: View {
             }
         }
         .buttonStyle(.plain)
-    }
-}
-
-private struct SidebarAssociateProfileButton: View {
-    let associate: AssociateProfile
-    let action: () -> Void
-
-    var body: some View {
-        HStack {
-            Spacer()
-            Button(action: action) {
-                Text(associate.initials)
-                    .font(.headline.weight(.black))
-                    .foregroundStyle(.white)
-                    .frame(width: 48, height: 48)
-                    .background(Theme.goldGradient, in: Circle())
-                    .shadow(color: Theme.gold.opacity(0.15), radius: 6, x: 0, y: 3)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Open sales associate profile")
-            Spacer()
-        }
     }
 }
 
