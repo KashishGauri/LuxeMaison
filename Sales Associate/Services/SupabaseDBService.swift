@@ -462,49 +462,77 @@ class SupabaseDBService {
         return targets.first
     }
     
-    /// Calculates the weekly sales summary and weekday bars from associate sales.
+    /// Calculates the weekly sales summary from associate sales: this week's daily
+    /// bars + total, plus a REAL "vs last week" change computed by comparing this
+    /// week's total against last week's total (Monday-anchored weeks).
     func calculateWeeklySalesSummary(sales: [DBSale]) -> WeeklySalesSummary {
         let daysOfWeek = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-        var dailyTotals: [String: Double] = [:]
-        for d in daysOfWeek {
-            dailyTotals[d] = 0.0
-        }
-        
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
-        
         let calendar = Calendar.current
-        
-        for sale in sales {
-            if let date = formatter.date(from: sale.salesDate) {
-                let weekday = calendar.component(.weekday, from: date)
-                let dayName: String
-                switch weekday {
-                case 1: dayName = "Sun"
-                case 2: dayName = "Mon"
-                case 3: dayName = "Tue"
-                case 4: dayName = "Wed"
-                case 5: dayName = "Thu"
-                case 6: dayName = "Fri"
-                case 7: dayName = "Sat"
-                default: dayName = "Mon"
-                }
-                dailyTotals[dayName, default: 0.0] += sale.totalAmount
-            }
+
+        // Monday-anchored week boundaries around today.
+        let today = Date()
+        let weekday = calendar.component(.weekday, from: today)     // 1=Sun … 7=Sat
+        let daysFromMonday = (weekday + 5) % 7                       // Mon=0 … Sun=6
+        let startOfThisWeek = calendar.startOfDay(
+            for: calendar.date(byAdding: .day, value: -daysFromMonday, to: today) ?? today
+        )
+        let startOfLastWeek = calendar.date(byAdding: .day, value: -7, to: startOfThisWeek) ?? startOfThisWeek
+        let startOfNextWeek = calendar.date(byAdding: .day, value: 7, to: startOfThisWeek) ?? startOfThisWeek
+
+        func saleDate(_ sale: DBSale) -> Date? { formatter.date(from: sale.salesDate) }
+
+        let thisWeekSales = sales.filter { sale in
+            guard let d = saleDate(sale) else { return false }
+            return d >= startOfThisWeek && d < startOfNextWeek
         }
-        
-        let totalSum = sales.reduce(0.0) { $0 + $1.totalAmount }
-        let totalStr = totalSum >= 100000.0 ? String(format: "Rs. %.1fL", totalSum / 100000.0) : String(format: "Rs. %.0f", totalSum)
-        
+        let lastWeekSales = sales.filter { sale in
+            guard let d = saleDate(sale) else { return false }
+            return d >= startOfLastWeek && d < startOfThisWeek
+        }
+
+        // This week's daily totals (Mon..Sun).
+        var dailyTotals: [String: Double] = Dictionary(uniqueKeysWithValues: daysOfWeek.map { ($0, 0.0) })
+        for sale in thisWeekSales {
+            guard let date = saleDate(sale) else { continue }
+            let dayName: String
+            switch calendar.component(.weekday, from: date) {
+            case 1: dayName = "Sun"
+            case 2: dayName = "Mon"
+            case 3: dayName = "Tue"
+            case 4: dayName = "Wed"
+            case 5: dayName = "Thu"
+            case 6: dayName = "Fri"
+            default: dayName = "Sat"
+            }
+            dailyTotals[dayName, default: 0.0] += sale.totalAmount
+        }
+
+        let thisWeekTotal = thisWeekSales.reduce(0.0) { $0 + $1.totalAmount }
+        let lastWeekTotal = lastWeekSales.reduce(0.0) { $0 + $1.totalAmount }
+        let totalStr = thisWeekTotal >= 100000.0
+            ? String(format: "Rs. %.1fL", thisWeekTotal / 100000.0)
+            : String(format: "Rs. %.0f", thisWeekTotal)
+
+        // Real week-over-week change.
+        let changeStr: String
+        if lastWeekTotal > 0 {
+            let pct = (thisWeekTotal - lastWeekTotal) / lastWeekTotal * 100
+            changeStr = "\(pct >= 0 ? "+" : "")\(Int(pct.rounded()))%"
+        } else {
+            changeStr = thisWeekTotal > 0 ? "New" : "0%"
+        }
+
         var bestDayName = "Mon"
         var maxAmount = 0.0
-        for (day, amt) in dailyTotals {
-            if amt > maxAmount {
+        for d in daysOfWeek {
+            if let amt = dailyTotals[d], amt > maxAmount {
                 maxAmount = amt
-                bestDayName = day
+                bestDayName = d
             }
         }
-        
+
         var dailySalesList: [DailySales] = []
         for d in daysOfWeek {
             let amt = dailyTotals[d] ?? 0.0
@@ -516,7 +544,7 @@ class SupabaseDBService {
             } else {
                 amtStr = String(format: "%.0f", amt)
             }
-            
+
             let progress = maxAmount > 0 ? (amt / maxAmount) : 0.0
             dailySalesList.append(DailySales(
                 day: d,
@@ -525,10 +553,10 @@ class SupabaseDBService {
                 isBest: d == bestDayName && maxAmount > 0
             ))
         }
-        
+
         return WeeklySalesSummary(
             total: totalStr,
-            change: "+15%",
+            change: changeStr,
             comparison: "vs last week",
             bestDay: bestDayName,
             bestDayLabel: "Best sales day",
