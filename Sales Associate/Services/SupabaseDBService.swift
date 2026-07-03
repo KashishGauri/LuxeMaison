@@ -516,6 +516,25 @@ class SupabaseDBService {
             throw URLError(.badServerResponse)
         }
     }
+
+    /// Fetches all products from the Supabase Product table.
+    func fetchDBProducts() async throws -> [DBProduct] {
+        guard let url = URL(string: "\(baseURL)/Product?select=*") else {
+            throw URLError(.badURL)
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+        
+        return try JSONDecoder().decode([DBProduct].self, from: data)
+    }
 }
 
 struct DBAppointment: Codable, Identifiable {
@@ -700,6 +719,38 @@ struct DBSale: Codable {
         case preTaxAmount
         case taxAmount
         case totalAmount
+    }
+}
+
+struct DBProduct: Codable {
+    let id: String
+    let sku: String?
+    let name: String
+    let brand: String?
+    let category: String?
+    let barcode: String?
+    let basePrice: Double?
+    let isActive: Bool?
+    let imageUrl: String?
+    let updatedat: String?
+    let createdat: String?
+    let currentStock: Int?
+    let reorderThreshold: Int?
+    
+    enum CodingKeys: String, CodingKey {
+        case id
+        case sku
+        case name
+        case brand
+        case category
+        case barcode
+        case basePrice
+        case isActive
+        case imageUrl = "image_url"
+        case updatedat
+        case createdat
+        case currentStock = "current_stock"
+        case reorderThreshold = "reorder_threshold"
     }
 }
 

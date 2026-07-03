@@ -8,12 +8,35 @@ struct ProductImageView: View {
             ZStack {
                 Theme.selected
 
-                Image(imageName)
-                    .resizable()
-                    .scaledToFill()
+                if imageName.hasPrefix("http://") || imageName.hasPrefix("https://") {
+                    AsyncImage(url: URL(string: imageName)) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                        case .failure:
+                            Image(systemName: "photo")
+                                .font(.title)
+                                .foregroundStyle(Theme.muted)
+                        case .empty:
+                            ProgressView()
+                                .tint(Theme.gold)
+                        @unknown default:
+                            EmptyView()
+                        }
+                    }
                     .frame(width: proxy.size.width, height: proxy.size.height)
                     .scaleEffect(1.06)
                     .offset(y: -8)
+                } else {
+                    Image(imageName)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: proxy.size.width, height: proxy.size.height)
+                        .scaleEffect(1.06)
+                        .offset(y: -8)
+                }
             }
             .clipped()
         }

@@ -12,16 +12,19 @@ struct SalesAssociateRootView: View {
     @State private var recentlyViewedClients: [ClientProfile] = []
     @State private var clientProfiles = ClientProfileJSONStore.loadProfiles()
     @State private var sellingSession = SellingSessionState()
-    // Seeded once with on-hand stock counts so a completed sale can decrement them.
-    @State private var products: [SalesProduct] = SalesProduct.sampleProducts.map { $0.seededStockQuantity() }
+    // Loaded dynamically from Supabase database Product table.
+    @State private var products: [SalesProduct] = []
 
     private let categories = ProductCategory.sampleCategories
     private let stockDashboard = StockDashboard.sample
     private let issueDashboard = IssueDashboard.sample
 
     @State private var appointments: [DBAppointment] = []
+    @State private var dailyTasks: [DBDailyTask] = []
+    @State private var sales: [DBSale] = []
     @State private var dynamicSalesGoal: SalesGoal? = nil
     @State private var dynamicWeeklySales: WeeklySalesSummary? = nil
+    @State private var dynamicMetrics: [DashboardMetric]? = nil
 
     /// Merges upcoming Supabase appointments into the dashboard's priority queue.
     private var customizedDashboard: SalesAssociateDashboard {
@@ -74,10 +77,15 @@ struct SalesAssociateRootView: View {
         }
 
         var combinedPriorities = apptPriorities
-        for item in loggedInDashboard.priorityItems {
-            if !item.title.lowercased().contains("appointment") {
-                combinedPriorities.append(item)
-            }
+        if combinedPriorities.isEmpty {
+            combinedPriorities = [
+                PriorityItem(
+                    icon: "calendar",
+                    title: "Queue Clear",
+                    subtitle: "No upcoming appointments today",
+                    badge: nil
+                )
+            ]
         }
 
         return SalesAssociateDashboard(
@@ -85,7 +93,7 @@ struct SalesAssociateRootView: View {
             monthlyGoal: dynamicSalesGoal ?? loggedInDashboard.monthlyGoal,
             priorityItems: combinedPriorities,
             quickActions: loggedInDashboard.quickActions,
-            metrics: loggedInDashboard.metrics,
+            metrics: dynamicMetrics ?? loggedInDashboard.metrics.filter { $0.title != "VIP Today" },
             weeklySales: dynamicWeeklySales ?? loggedInDashboard.weeklySales
         )
     }
@@ -104,8 +112,10 @@ struct SalesAssociateRootView: View {
                 clientProfiles: $clientProfiles,
                 categories: categories,
                 products: $products,
-                stockDashboard: stockDashboard,
+                stockDashboard: customizedStockDashboard,
                 issueDashboard: issueDashboard,
+                dailyTasks: $dailyTasks,
+                sales: $sales,
                 selectedTab: $selectedTab,
                 navigationMode: $navigationMode,
                 recentlyViewedClients: $recentlyViewedClients,
@@ -117,8 +127,27 @@ struct SalesAssociateRootView: View {
                 await syncProfilesWithSupabase()
                 await loadAppointments()
                 await loadSalesAndGoal()
+                await loadProductsFromDB()
             }
         }
+    }
+
+    private var customizedStockDashboard: StockDashboard {
+        let totalStock = products.reduce(0) { $0 + $1.stockQuantity }
+        let totalStockString = String(format: "%02d", totalStock)
+        
+        let updatedMetrics = [
+            StockMetric(title: "In Boutique", value: totalStockString, detail: "sellable pieces"),
+            StockMetric(title: "SM Review", value: "03", detail: "fulfillment checks"),
+            StockMetric(title: "Scanned Today", value: "12", detail: "certificate checks")
+        ]
+        
+        return StockDashboard(
+            metrics: updatedMetrics,
+            issueTypes: stockDashboard.issueTypes,
+            scanChecks: stockDashboard.scanChecks,
+            reviews: stockDashboard.reviews
+        )
     }
 
     private func loadSalesAndGoal() async {
@@ -127,6 +156,7 @@ struct SalesAssociateRootView: View {
             if !associateID.hasSuffix("-id") {
                 let sales = try await SupabaseDBService.shared.fetchSales(for: associateID)
                 let target = try await SupabaseDBService.shared.fetchAssociateSalesTarget(for: associateID)
+                let tasks = try await SupabaseDBService.shared.fetchDailyTasks(for: associateID)
                 
                 let achievedSum = sales.reduce(0.0) { $0 + $1.totalAmount }
                 let achievedStr = achievedSum >= 100000.0 ? String(format: "Rs. %.1fL", achievedSum / 100000.0) : String(format: "Rs. %.0f", achievedSum)
@@ -145,9 +175,21 @@ struct SalesAssociateRootView: View {
                 
                 let weeklySalesSummary = SupabaseDBService.shared.calculateWeeklySalesSummary(sales: sales)
                 
+                let uniqueClientsCount = Set(sales.compactMap { $0.customerID }).count
+                let openCartsValue = String(format: "%02d", uniqueClientsCount)
+                let followUpsValue = String(format: "%02d", tasks.filter { !$0.isCompleted }.count)
+                
+                let metrics = [
+                    DashboardMetric(title: "Open Carts", value: openCartsValue),
+                    DashboardMetric(title: "Follow-ups", value: followUpsValue)
+                ]
+                
                 await MainActor.run {
                     self.dynamicSalesGoal = salesGoal
                     self.dynamicWeeklySales = weeklySalesSummary
+                    self.dailyTasks = tasks
+                    self.sales = sales
+                    self.dynamicMetrics = metrics
                 }
             } else {
                 let achievedSum = 100000.0
@@ -180,14 +222,34 @@ struct SalesAssociateRootView: View {
                     days: mockDays
                 )
                 
+                let mockTasks = [
+                    DBDailyTask(id: "mock-task-1", userID: associateID, date: "2026-07-02", title: "Verify boutique planogram guidelines", isCompleted: true),
+                    DBDailyTask(id: "mock-task-2", userID: associateID, date: "2026-07-02", title: "Welcome premium VIP clients", isCompleted: false),
+                    DBDailyTask(id: "mock-task-3", userID: associateID, date: "2026-07-02", title: "Complete shift checklist handover", isCompleted: false)
+                ]
+                
+                let mockSales = [
+                    DBSale(id: "s1", customerID: "bf8300be-664e-4606-8497-37c5a2ea836a", salesAssociateID: associateID, storeID: "mock-store", salesDate: "2026-07-02", currency: "INR", preTaxAmount: 40000.0, taxAmount: 4000.0, totalAmount: 44000.0),
+                    DBSale(id: "s2", customerID: "701d1f4e-5af8-4772-990d-b0b96c0e3e83", salesAssociateID: associateID, storeID: "mock-store", salesDate: "2026-07-01", currency: "INR", preTaxAmount: 50000.0, taxAmount: 5000.0, totalAmount: 55000.0),
+                    DBSale(id: "s3", customerID: "3c193803-be64-4a46-bcaf-a00ccfa497da", salesAssociateID: associateID, storeID: "mock-store", salesDate: "2026-07-02", currency: "INR", preTaxAmount: 1000.0, taxAmount: 100.0, totalAmount: 1100.0)
+                ]
+                
+                let metrics = [
+                    DashboardMetric(title: "Open Carts", value: "03"),
+                    DashboardMetric(title: "Follow-ups", value: "02")
+                ]
+                
                 await MainActor.run {
                     self.dynamicSalesGoal = salesGoal
                     self.dynamicWeeklySales = weeklySalesSummary
+                    self.dailyTasks = mockTasks
+                    self.sales = mockSales
+                    self.dynamicMetrics = metrics
                 }
             }
         } catch {
             #if DEBUG
-            print("Failed to fetch sales target / weekly sales: \(error)")
+            print("Failed to fetch sales target / weekly sales/tasks: \(error)")
             #endif
         }
     }
@@ -230,6 +292,83 @@ struct SalesAssociateRootView: View {
             print("Supabase Sync ERROR Details: \(error.localizedDescription)")
         }
     }
+
+    private func formatPrice(_ amount: Double) -> String {
+        if amount >= 10000000 { // 1 Crore
+            return String(format: "Rs. %.2fCr", amount / 10000000.0)
+        } else if amount >= 100000 { // 1 Lakh
+            return String(format: "Rs. %.2fL", amount / 100000.0)
+        } else if amount >= 1000 { // Thousands
+            return String(format: "Rs. %.1fk", amount / 1000.0)
+        } else {
+            return String(format: "Rs. %.0f", amount)
+        }
+    }
+
+    private func normalizeCategoryID(_ category: String) -> String {
+        let lower = category.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if lower.contains("handbag") || lower.contains("bag") || lower.contains("clutch") || lower.contains("pouch") || lower.contains("backpack") || lower.contains("case") || lower.contains("tote") || lower.contains("briefcase") {
+            return "handbags"
+        } else if lower.contains("watch") || lower.contains("chrono") || lower.contains("president") {
+            return "watches"
+        } else if lower.contains("fragrance") || lower.contains("perfume") || lower.contains("scent") || lower.contains("cologne") || lower.contains("mist") || lower.contains("spray") || lower.contains("wind") {
+            return "fragrances"
+        } else if lower.contains("footwear") || lower.contains("shoe") || lower.contains("heel") || lower.contains("flat") || lower.contains("loafer") || lower.contains("oxford") || lower.contains("slip") {
+            return "footwear"
+        } else if lower.contains("jewel") || lower.contains("gem") || lower.contains("ring") || lower.contains("necklace") || lower.contains("bracelet") || lower.contains("pendant") || lower.contains("earring") || lower.contains("bangle") || lower.contains("set") || lower.contains("brooch") || lower.contains("sparkle") {
+            // Redirect jewellery/sets to watches (accessories)
+            return "watches"
+        }
+        return "handbags" // Default fallback
+    }
+
+    private func loadProductsFromDB() async {
+        print("Supabase Sync: Starting product sync...")
+        do {
+            let dbProducts = try await SupabaseDBService.shared.fetchDBProducts()
+            print("Supabase Sync: Fetched \(dbProducts.count) products from DB.")
+            
+            await MainActor.run {
+                self.products = dbProducts.map { dbProduct in
+                    // Format price
+                    let rawPrice = dbProduct.basePrice ?? 0
+                    let normalizedPrice = rawPrice < 1000 ? rawPrice * 100000 : rawPrice
+                    let formattedPrice = self.formatPrice(normalizedPrice)
+                    let normalizedCat = self.normalizeCategoryID(dbProduct.category ?? "accessories")
+                    
+                    return SalesProduct(
+                        id: dbProduct.sku ?? dbProduct.id,
+                        name: dbProduct.name,
+                        brand: dbProduct.brand ?? "LuxeMaison",
+                        categoryID: normalizedCat,
+                        audience: "Women",
+                        price: formattedPrice,
+                        originalPrice: nil,
+                        imageName: dbProduct.imageUrl ?? "default_product",
+                        badge: nil,
+                        availability: (dbProduct.currentStock ?? 0) > 0 ? "In boutique" : "Out of stock",
+                        stockNote: "\((dbProduct.currentStock ?? 0)) pieces available in boutique",
+                        sizes: ["One size"],
+                        materials: ["Standard"],
+                        colors: ["Default"],
+                        suggestedReason: "Boutique verified luxury item",
+                        isWishlisted: false,
+                        stockQuantity: dbProduct.currentStock ?? 0,
+                        existsInDB: true,
+                        barcode: dbProduct.barcode,
+                        isActive: dbProduct.isActive,
+                        reorderThreshold: dbProduct.reorderThreshold
+                    )
+                }
+                print("Supabase Sync: Products loaded from database successfully.")
+            }
+        } catch {
+            print("Supabase Sync Products ERROR: \(error)")
+            await MainActor.run {
+                self.products = []
+            }
+        }
+    }
 }
 
 enum SalesNavigationMode: Equatable {
@@ -246,6 +385,8 @@ struct TodayDashboardView: View {
     @Binding var products: [SalesProduct]
     let stockDashboard: StockDashboard
     let issueDashboard: IssueDashboard
+    @Binding var dailyTasks: [DBDailyTask]
+    @Binding var sales: [DBSale]
 
     @Binding var selectedTab: SalesAssociateTab
     @Binding var navigationMode: SalesNavigationMode
@@ -254,6 +395,8 @@ struct TodayDashboardView: View {
     @State private var isAssociateProfilePresented = false
     @State private var isAppointmentsSheetPresented = false
     @State private var isNotificationsSheetPresented = false
+    @State private var isHandledClientsPresented = false
+    @State private var isDailyTasksSheetPresented = false
     let onLogout: () -> Void
 
     var body: some View {
@@ -290,13 +433,19 @@ struct TodayDashboardView: View {
             .background(Theme.background)
             .animation(.snappy(duration: 0.26), value: navigationMode)
             .sheet(isPresented: $isAssociateProfilePresented) {
-                AssociateProfileSheet(associate: dashboard.associate, onLogout: onLogout)
+                AssociateProfileSheet(associate: dashboard.associate, dailyTasks: $dailyTasks, onLogout: onLogout)
             }
             .sheet(isPresented: $isAppointmentsSheetPresented) {
                 AppointmentsSheet(associateID: dashboard.associate.id, clientProfiles: clientProfiles)
             }
             .sheet(isPresented: $isNotificationsSheetPresented) {
                 NotificationsSheet(appointments: appointments, clientProfiles: clientProfiles)
+            }
+            .sheet(isPresented: $isHandledClientsPresented) {
+                HandledClientsSheet(sales: sales, clientProfiles: clientProfiles)
+            }
+            .sheet(isPresented: $isDailyTasksSheetPresented) {
+                DailyTasksSheet(dailyTasks: $dailyTasks, associateId: dashboard.associate.id)
             }
         }
     }
@@ -310,7 +459,9 @@ struct TodayDashboardView: View {
                 reminderCount: reminderCount,
                 onStartClient: startGuestSelling,
                 onShowAppointments: { isAppointmentsSheetPresented = true },
-                onShowNotifications: { isNotificationsSheetPresented = true }
+                onShowNotifications: { isNotificationsSheetPresented = true },
+                onShowDailyTasks: { isDailyTasksSheetPresented = true },
+                onShowHandledClients: { isHandledClientsPresented = true }
             )
         case .client:
             ClientelingContent(
@@ -450,7 +601,7 @@ struct TodayDashboardView: View {
 enum SalesAssociateTab: String, CaseIterable, Identifiable {
     case today = "Today"
     case client = "Clienteling"
-    case sell = "Sell"
+    case sell = "Billing"
     case stock = "Stock"
     case issue = "Issue"
 
@@ -675,11 +826,11 @@ private struct SidebarAssociateProfileButton: View {
 
 private struct AssociateProfileSheet: View {
     let associate: AssociateProfile
+    @Binding var dailyTasks: [DBDailyTask]
     let onLogout: () -> Void
     @Environment(\.dismiss) private var dismiss
 
     @State private var shifts: [DBShift] = []
-    @State private var dailyTasks: [DBDailyTask] = []
     @State private var isLoading = false
 
     var body: some View {
@@ -768,67 +919,6 @@ private struct AssociateProfileSheet: View {
                             }
                         }
                     }
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("DAILY TASKS")
-                            .font(.caption.weight(.black))
-                            .tracking(1.1)
-                            .foregroundStyle(Theme.muted)
-
-                        if dailyTasks.isEmpty {
-                            Text("No daily tasks assigned for today.")
-                                .font(.subheadline)
-                                .foregroundStyle(Theme.muted)
-                                .padding()
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(.white.opacity(0.42), in: RoundedRectangle(cornerRadius: 15))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 15)
-                                        .stroke(Theme.line.opacity(0.3), lineWidth: 1)
-                                )
-                        } else {
-                            VStack(spacing: 12) {
-                                ForEach(dailyTasks.indices, id: \.self) { index in
-                                    Button {
-                                        dailyTasks[index].isCompleted.toggle()
-                                        if !associate.id.hasSuffix("-id") {
-                                            let task = dailyTasks[index]
-                                            Task {
-                                                await SupabaseDBService.shared.updateDailyTaskStatus(taskId: task.id, isCompleted: task.isCompleted)
-                                            }
-                                        }
-                                    } label: {
-                                        HStack(spacing: 12) {
-                                            Image(systemName: dailyTasks[index].isCompleted ? "checkmark.circle.fill" : "circle")
-                                                .font(.headline.weight(.black))
-                                                .foregroundStyle(dailyTasks[index].isCompleted ? .green : Theme.gold)
-                                                .frame(width: 44, height: 44)
-                                                .background(Theme.selected, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
-
-                                            VStack(alignment: .leading, spacing: 3) {
-                                                Text(dailyTasks[index].date)
-                                                    .font(.caption.weight(.black))
-                                                    .tracking(1.1)
-                                                    .foregroundStyle(Theme.muted)
-                                                Text(dailyTasks[index].title)
-                                                    .font(.headline.weight(.bold))
-                                                    .foregroundStyle(Theme.ink)
-                                                    .multilineTextAlignment(.leading)
-                                            }
-                                            Spacer()
-                                        }
-                                    }
-                                    .buttonStyle(.plain)
-                                    .padding(14)
-                                    .background(.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                            .stroke(Theme.line.opacity(0.4), lineWidth: 1)
-                                    )
-                                }
-                            }
-                        }
-                    }
                 }
 
                 Spacer(minLength: 16)
@@ -866,18 +956,12 @@ private struct AssociateProfileSheet: View {
             do {
                 if associate.id.hasSuffix("-id") {
                     shifts = [DBShift(id: "mock-shift-1", userID: associate.id, storeID: "mock-store", shiftType: associate.shift)]
-                    dailyTasks = [
-                        DBDailyTask(id: "mock-task-1", userID: associate.id, date: "2026-07-02", title: "Verify boutique planogram guidelines", isCompleted: true),
-                        DBDailyTask(id: "mock-task-2", userID: associate.id, date: "2026-07-02", title: "Welcome premium VIP clients", isCompleted: false),
-                        DBDailyTask(id: "mock-task-3", userID: associate.id, date: "2026-07-02", title: "Complete shift checklist handover", isCompleted: false)
-                    ]
                 } else {
                     shifts = try await SupabaseDBService.shared.fetchShifts(for: associate.id)
-                    dailyTasks = try await SupabaseDBService.shared.fetchDailyTasks(for: associate.id)
                 }
             } catch {
                 #if DEBUG
-                print("Failed to fetch shifts/tasks: \(error)")
+                print("Failed to fetch shifts: \(error)")
                 #endif
             }
             isLoading = false
@@ -1045,16 +1129,25 @@ struct AppointmentRow: View {
     let clientProfile: ClientProfile?
     let onToggleStatus: () -> Void
 
+    private var isTimeReached: Bool {
+        guard let startDate = appointment.startDate else { return true }
+        return Date() >= startDate
+    }
+
     var body: some View {
         HStack(spacing: 16) {
             Button(action: onToggleStatus) {
                 Image(systemName: appointment.status == "completed" ? "checkmark.circle.fill" : "circle")
                     .font(.title2.weight(.bold))
-                    .foregroundStyle(appointment.status == "completed" ? .green : Theme.gold)
+                    .foregroundStyle(
+                        !isTimeReached ? Theme.muted.opacity(0.4) :
+                        (appointment.status == "completed" ? .green : Theme.gold)
+                    )
                     .frame(width: 44, height: 44)
                     .background(Theme.selected, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
             .buttonStyle(.plain)
+            .disabled(!isTimeReached)
             .accessibilityLabel("Toggle appointment completion status")
 
             VStack(alignment: .leading, spacing: 6) {
@@ -1306,6 +1399,196 @@ private struct NotificationRow: View {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(Theme.line.opacity(0.4), lineWidth: 1)
         )
+    }
+}
+
+
+struct HandledClientsSheet: View {
+    let sales: [DBSale]
+    let clientProfiles: [ClientProfile]
+    @Environment(\.dismiss) private var dismiss
+
+    private var handledClients: [ClientProfile] {
+        let uniqueCustomerIDs = Array(Set(sales.compactMap { $0.customerID }))
+        return uniqueCustomerIDs.compactMap { customerID in
+            clientProfiles.first(where: { $0.id == customerID })
+        }
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                HStack(alignment: .top, spacing: 14) {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.title2.weight(.black))
+                            .foregroundStyle(Theme.ink)
+                            .frame(width: 44, height: 44)
+                            .background(.white.opacity(0.85), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Handled Clients")
+                            .font(.title2.weight(.black))
+                            .foregroundStyle(Theme.ink)
+                        Text("Clients you have handled or assisted today")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Theme.muted)
+                    }
+
+                    Spacer()
+
+                    Text("\(handledClients.count) Clients")
+                        .font(.caption.weight(.black))
+                        .foregroundStyle(Theme.gold)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(Theme.selected, in: Capsule())
+                }
+
+                if handledClients.isEmpty {
+                    VStack(spacing: 12) {
+                        Image(systemName: "person.3.sequence.fill")
+                            .font(.system(size: 48))
+                            .foregroundStyle(Theme.muted.opacity(0.6))
+                            .padding(.top, 40)
+                        Text("No Clients Handled Today")
+                            .font(.headline.weight(.bold))
+                            .foregroundStyle(Theme.ink)
+                        Text("Any sales checkout or profile update you complete will show up here.")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(Theme.muted)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 24)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 280)
+                } else {
+                    VStack(spacing: 12) {
+                        ForEach(handledClients) { client in
+                            HStack(spacing: 16) {
+                                ClientAvatar(initials: client.initials, size: 54)
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(client.name)
+                                        .font(.headline.weight(.bold))
+                                        .foregroundStyle(Theme.ink)
+                                    Text("\(client.phone) • \(client.boutique)")
+                                        .font(.caption.weight(.bold))
+                                        .foregroundStyle(Theme.muted)
+                                }
+
+                                Spacer()
+
+                                VStack(alignment: .trailing, spacing: 4) {
+                                    Text(client.tier.uppercased())
+                                        .font(.caption.weight(.black))
+                                        .foregroundStyle(Theme.gold)
+                                        .padding(.horizontal, 9)
+                                        .padding(.vertical, 4)
+                                        .background(Theme.selected, in: Capsule())
+                                    
+                                    Text(client.lifetimePurchaseText)
+                                        .font(.caption.weight(.bold))
+                                        .foregroundStyle(Theme.ink)
+                                }
+                            }
+                            .padding(14)
+                            .background(.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .stroke(Theme.line.opacity(0.4), lineWidth: 1)
+                            )
+                        }
+                    }
+                }
+            }
+            .padding(26)
+        }
+        .frame(minWidth: 460, minHeight: 520)
+        .background(Theme.background)
+    }
+}
+
+private struct DailyTasksSheet: View {
+    @Binding var dailyTasks: [DBDailyTask]
+    let associateId: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    if dailyTasks.isEmpty {
+                        Text("No daily tasks assigned for today.")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.muted)
+                            .padding()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(.white.opacity(0.42), in: RoundedRectangle(cornerRadius: 15))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 15)
+                                    .stroke(Theme.line.opacity(0.3), lineWidth: 1)
+                            )
+                    } else {
+                        ForEach(dailyTasks.indices, id: \.self) { index in
+                            Button {
+                                dailyTasks[index].isCompleted.toggle()
+                                if !associateId.hasSuffix("-id") {
+                                    let task = dailyTasks[index]
+                                    Task {
+                                        await SupabaseDBService.shared.updateDailyTaskStatus(taskId: task.id, isCompleted: task.isCompleted)
+                                    }
+                                }
+                            } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: dailyTasks[index].isCompleted ? "checkmark.circle.fill" : "circle")
+                                        .font(.title3.weight(.bold))
+                                        .foregroundStyle(dailyTasks[index].isCompleted ? .green : Theme.gold)
+                                        .frame(width: 44, height: 44)
+                                        .background(Theme.selected, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(dailyTasks[index].date)
+                                            .font(.caption.weight(.black))
+                                            .tracking(1.1)
+                                            .foregroundStyle(Theme.muted)
+                                        Text(dailyTasks[index].title)
+                                            .font(.headline.weight(.bold))
+                                            .foregroundStyle(Theme.ink)
+                                            .multilineTextAlignment(.leading)
+                                    }
+                                    Spacer()
+                                }
+                                .padding(14)
+                                .background(.white.opacity(0.62), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                        .stroke(Theme.line.opacity(0.45), lineWidth: 1)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .padding(20)
+            }
+            .background(Theme.background)
+            .navigationTitle("Daily Tasks")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .font(.headline)
+                    .foregroundStyle(Theme.gold)
+                }
+            }
+        }
+        .frame(minWidth: 460, minHeight: 520)
     }
 }
 

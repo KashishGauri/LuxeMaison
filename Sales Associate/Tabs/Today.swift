@@ -1,4 +1,5 @@
 import SwiftUI
+import Charts
 
 struct DashboardContent: View {
     let dashboard: SalesAssociateDashboard
@@ -6,6 +7,8 @@ struct DashboardContent: View {
     let onStartClient: () -> Void
     let onShowAppointments: () -> Void
     var onShowNotifications: () -> Void = {}
+    let onShowDailyTasks: () -> Void
+    let onShowHandledClients: () -> Void
 
     var body: some View {
         ScrollView {
@@ -25,7 +28,9 @@ struct DashboardContent: View {
                             actions: dashboard.quickActions,
                             metrics: dashboard.metrics,
                             onStartClient: onStartClient,
-                            onShowAppointments: onShowAppointments
+                            onShowAppointments: onShowAppointments,
+                            onShowDailyTasks: onShowDailyTasks,
+                            onShowHandledClients: onShowHandledClients
                         )
                     }
                     .frame(maxWidth: .infinity)
@@ -150,10 +155,17 @@ private struct StoreImageView: View {
 private struct PriorityQueueCard: View {
     let items: [PriorityItem]
 
+    private var badgeText: String {
+        if items.first?.title == "Queue Clear" {
+            return "0 open"
+        }
+        return "\(items.count) open"
+    }
+
     var body: some View {
         Card {
             VStack(alignment: .leading, spacing: 14) {
-                SalesSectionHeader(title: "Priority Queue", badge: "\(items.count) open")
+                SalesSectionHeader(title: "Priority Queue", badge: badgeText)
 
                 ForEach(items) { item in
                     PriorityRow(item: item)
@@ -215,14 +227,37 @@ private struct WeeklySalesCard: View {
                     SummaryTile(value: summary.bestDay, label: summary.bestDayLabel)
                 }
 
-                HStack(alignment: .bottom, spacing: 14) {
+                Chart {
                     ForEach(summary.days) { day in
-                        BarColumn(day: day)
+                        BarMark(
+                            x: .value("Day", day.day),
+                            y: .value("Sales", day.progress)
+                        )
+                        .foregroundStyle(day.isBest ? AnyShapeStyle(Theme.goldGradient) : AnyShapeStyle(Theme.goldGradient.opacity(0.40)))
+                        .cornerRadius(6)
+                        .annotation(position: .top, alignment: .center) {
+                            Text(day.amount)
+                                .font(.system(size: 10, weight: .black, design: .rounded))
+                                .foregroundStyle(Theme.gold)
+                        }
                     }
                 }
-                .padding(.horizontal, 8)
-                .padding(.top, 12)
-                .frame(maxWidth: .infinity, minHeight: 196, alignment: .bottom)
+                .chartYAxis(.hidden)
+                .chartXAxis {
+                    AxisMarks(preset: .aligned) { value in
+                        AxisValueLabel() {
+                            if let dayStr = value.as(String.self) {
+                                Text(dayStr)
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(Theme.muted)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 16)
+                .padding(.bottom, 8)
+                .frame(maxWidth: .infinity, minHeight: 196)
                 .background(.white.opacity(0.40), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             }
             .frame(height: 342)
@@ -253,40 +288,13 @@ private struct SummaryTile: View {
     }
 }
 
-private struct BarColumn: View {
-    let day: DailySales
-
-    var body: some View {
-        VStack(spacing: 6) {
-            GeometryReader { proxy in
-                VStack {
-                    Spacer()
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(day.isBest ? AnyShapeStyle(Theme.goldGradient) : AnyShapeStyle(Theme.goldGradient.opacity(0.40)))
-                        .frame(height: max(28, proxy.size.height * day.progress))
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-            .frame(height: 132)
-
-            Text(day.day)
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(Theme.muted)
-            Text(day.amount)
-                .font(.caption2.weight(.black))
-                .foregroundStyle(Theme.gold)
-        }
-        .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(day.day), \(day.amount) sales")
-    }
-}
-
 private struct QuickActionsCard: View {
     let actions: [QuickAction]
     let metrics: [DashboardMetric]
     let onStartClient: () -> Void
     let onShowAppointments: () -> Void
+    let onShowDailyTasks: () -> Void
+    let onShowHandledClients: () -> Void
 
     private let actionColumns = [
         GridItem(.flexible(), spacing: 12),
@@ -306,6 +314,8 @@ private struct QuickActionsCard: View {
                                 onStartClient()
                             } else if action.title == "Appointments" {
                                 onShowAppointments()
+                            } else if action.title == "Daily Tasks" {
+                                onShowDailyTasks()
                             }
                         }
                     }
@@ -313,7 +323,11 @@ private struct QuickActionsCard: View {
 
                 LazyVGrid(columns: actionColumns, spacing: 12) {
                     ForEach(metrics) { metric in
-                        MetricTile(metric: metric)
+                        MetricTile(metric: metric) {
+                            if metric.title == "Open Carts" {
+                                onShowHandledClients()
+                            }
+                        }
                     }
                 }
 
@@ -353,23 +367,30 @@ private struct ActionButton: View {
 
 private struct MetricTile: View {
     let metric: DashboardMetric
+    var onTap: (() -> Void)? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(metric.title.uppercased())
-                .font(.caption.weight(.black))
-                .tracking(1.1)
-                .foregroundStyle(Theme.muted)
-            Text(metric.value)
-                .font(.system(size: 32, weight: .black, design: .rounded))
+        Button {
+            onTap?()
+        } label: {
+            VStack(alignment: .leading, spacing: 7) {
+                Text(metric.title.uppercased())
+                    .font(.caption.weight(.black))
+                    .tracking(1.1)
+                    .foregroundStyle(Theme.muted)
+                Text(metric.value)
+                    .font(.system(size: 32, weight: .black, design: .rounded))
+            }
+            .frame(maxWidth: .infinity, minHeight: 94, alignment: .leading)
+            .padding(.horizontal, 16)
+            .background(.white.opacity(0.58), in: RoundedRectangle(cornerRadius: 19, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 19, style: .continuous)
+                    .stroke(Theme.line.opacity(0.55), lineWidth: 1)
+            )
         }
-        .frame(maxWidth: .infinity, minHeight: 94, alignment: .leading)
-        .padding(.horizontal, 16)
-        .background(.white.opacity(0.58), in: RoundedRectangle(cornerRadius: 19, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 19, style: .continuous)
-                .stroke(Theme.line.opacity(0.55), lineWidth: 1)
-        )
+        .buttonStyle(.plain)
+        .disabled(onTap == nil)
     }
 }
 

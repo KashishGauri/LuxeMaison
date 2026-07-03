@@ -250,6 +250,15 @@ private struct StockProductRow: View {
                         .padding(.horizontal, 8)
                         .padding(.vertical, 5)
                         .background(Theme.selected, in: Capsule())
+
+                    if !product.existsInDB {
+                        Text("Not in DB")
+                            .font(.system(size: 9, weight: .black))
+                            .foregroundStyle(.red)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(Color.red.opacity(0.12), in: Capsule())
+                    }
                 }
 
                 Text(product.stockNote)

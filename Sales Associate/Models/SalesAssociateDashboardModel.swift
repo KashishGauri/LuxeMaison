@@ -521,13 +521,13 @@ struct ProductCategory: Identifiable, Equatable {
 
 struct SalesProduct: Identifiable, Equatable {
     let id: String
-    let name: String
-    let brand: String
-    let categoryID: String
+    var name: String
+    var brand: String
+    var categoryID: String
     let audience: String
-    let price: String
+    var price: String
     let originalPrice: String?
-    let imageName: String
+    var imageName: String
     let badge: String?
     let availability: String
     let stockNote: String
@@ -539,6 +539,13 @@ struct SalesProduct: Identifiable, Equatable {
     /// On-hand units for this SKU. Mutable so a completed sale can decrement it.
     /// Seeded from `stockNote`/`availability` via `seededStockQuantity()`.
     var stockQuantity: Int = 0
+    /// Tracks if the product was fetched from the Supabase database.
+    var existsInDB: Bool = true
+    
+    // Additional Supabase database fields
+    var barcode: String? = nil
+    var isActive: Bool? = true
+    var reorderThreshold: Int? = nil
 
     /// Returns a copy with `stockQuantity` seeded from the catalogue metadata, so
     /// the Stock screen shows a real count that a sale can then reduce.

@@ -528,29 +528,37 @@ private struct CategoryStrip: View {
 
     var body: some View {
         ScrollView(.horizontal) {
-            HStack(spacing: 10) {
+            HStack(spacing: 22) {
                 ForEach(categories) { category in
                     Button {
                         onSelect(category)
                     } label: {
-                        Label(category.title, systemImage: category.icon)
-                            .font(.headline.weight(.bold))
-                            .padding(.horizontal, 16)
-                            .frame(height: 48)
-                            .foregroundStyle(selectedCategoryID == category.id ? .white : Theme.ink)
-                            .background(
-                                selectedCategoryID == category.id ? AnyShapeStyle(Theme.goldGradient) : AnyShapeStyle(.white.opacity(0.66)),
-                                in: Capsule()
-                            )
+                        VStack(spacing: 8) {
+                            ZStack {
+                                Circle()
+                                    .fill(selectedCategoryID == category.id ? AnyShapeStyle(Theme.goldGradient) : AnyShapeStyle(.white.opacity(0.85)))
+                                    .shadow(color: .black.opacity(selectedCategoryID == category.id ? 0.12 : 0.04), radius: 8, x: 0, y: 4)
+                                
+                                Image(systemName: category.icon)
+                                    .font(.system(size: 22, weight: .medium))
+                                    .foregroundStyle(selectedCategoryID == category.id ? .white : Theme.ink)
+                            }
+                            .frame(width: 64, height: 64)
                             .overlay(
-                                Capsule()
-                                    .stroke(Theme.line.opacity(0.55), lineWidth: 1)
+                                Circle()
+                                    .stroke(selectedCategoryID == category.id ? Theme.gold.opacity(0.3) : Theme.line.opacity(0.55), lineWidth: 1)
                             )
+                            
+                            Text(category.title)
+                                .font(.system(size: 13, weight: .bold, design: .rounded))
+                                .foregroundStyle(selectedCategoryID == category.id ? Theme.gold : Theme.ink)
+                        }
                     }
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.vertical, 2)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 6)
         }
         .scrollIndicators(.hidden)
     }
@@ -860,60 +868,43 @@ private struct SellProductBrowser: View {
                 onSelect: onSelect
             )
 
-            Card {
-                VStack(alignment: .leading, spacing: 16) {
-                    HStack {
-                        Text(title)
-                            .font(.title2.weight(.black))
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    Text(title)
+                        .font(.title2.weight(.black))
 
-                        Spacer()
+                    Spacer()
 
-                        if !products.isEmpty {
-                            Button(action: onToggleViewAll) {
-                                Text(isExpanded ? "Show Less" : "View All")
-                                    .font(.caption.weight(.black))
-                                    .foregroundStyle(Theme.gold)
-                                    .padding(.horizontal, 13)
-                                    .padding(.vertical, 8)
-                                    .background(Theme.selected, in: Capsule())
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-
-                    if products.isEmpty {
-                        VStack(spacing: 10) {
-                            Image(systemName: "magnifyingglass")
-                                .font(.title.weight(.bold))
+                    if !products.isEmpty {
+                        Button(action: onToggleViewAll) {
+                            Text(isExpanded ? "Show Less" : "View All")
+                                .font(.caption.weight(.black))
                                 .foregroundStyle(Theme.gold)
-                            Text("No products found")
-                                .font(.headline.weight(.bold))
-                            Text("Try another product name, product ID, or category.")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(Theme.muted)
+                                .padding(.horizontal, 13)
+                                .padding(.vertical, 8)
+                                .background(Theme.selected, in: Capsule())
                         }
-                        .frame(maxWidth: .infinity, minHeight: 220)
-                    } else if isExpanded {
-                        LazyVGrid(columns: columns, spacing: 14) {
-                            ForEach(products) { product in
-                                ProductGridCard(
-                                    product: product,
-                                    isSelected: selectedProduct == product,
-                                    allowsWishlist: allowsWishlist,
-                                    isWishlisted: isWishlisted(product),
-                                    onToggleWishlist: {
-                                        onToggleWishlist(product)
-                                    }
-                                ) {
-                                    onSelect(product)
-                                }
-                                .frame(height: 288)
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                Card {
+                    Group {
+                        if products.isEmpty {
+                            VStack(spacing: 10) {
+                                Image(systemName: "magnifyingglass")
+                                    .font(.title.weight(.bold))
+                                    .foregroundStyle(Theme.gold)
+                                Text("No products found")
+                                    .font(.headline.weight(.bold))
+                                Text("Try another product name, product ID, or category.")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(Theme.muted)
                             }
-                        }
-                    } else {
-                        ScrollView(.horizontal) {
-                            HStack(spacing: 14) {
-                                ForEach(Array(products.prefix(10))) { product in
+                            .frame(maxWidth: .infinity, minHeight: 220)
+                        } else if isExpanded {
+                            LazyVGrid(columns: columns, spacing: 14) {
+                                ForEach(products) { product in
                                     ProductGridCard(
                                         product: product,
                                         isSelected: selectedProduct == product,
@@ -925,15 +916,34 @@ private struct SellProductBrowser: View {
                                     ) {
                                         onSelect(product)
                                     }
-                                    .frame(width: 176, height: 288)
+                                    .frame(height: 288)
                                 }
                             }
+                        } else {
+                            ScrollView(.horizontal) {
+                                HStack(spacing: 14) {
+                                    ForEach(Array(products.prefix(10))) { product in
+                                        ProductGridCard(
+                                            product: product,
+                                            isSelected: selectedProduct == product,
+                                            allowsWishlist: allowsWishlist,
+                                            isWishlisted: isWishlisted(product),
+                                            onToggleWishlist: {
+                                                onToggleWishlist(product)
+                                            }
+                                        ) {
+                                            onSelect(product)
+                                        }
+                                        .frame(width: 176, height: 288)
+                                    }
+                                }
+                            }
+                            .scrollIndicators(.hidden)
                         }
-                        .scrollIndicators(.hidden)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
     }
 }
@@ -957,26 +967,26 @@ private struct SuggestedProductsRow: View {
     }
 
     var body: some View {
-        Card {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Text("Top Suggestions")
-                        .font(.title2.weight(.black))
-                    Spacer()
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Popular")
+                    .font(.title2.weight(.black))
+                Spacer()
 
-                    if products.count > visibleLimit {
-                        Button(action: onToggleViewAll) {
-                            Text(isExpanded ? "Show Less" : "View All")
-                                .font(.caption.weight(.black))
-                                .foregroundStyle(Theme.gold)
-                                .padding(.horizontal, 13)
-                                .padding(.vertical, 8)
-                                .background(Theme.selected, in: Capsule())
-                        }
-                        .buttonStyle(.plain)
+                if products.count > visibleLimit {
+                    Button(action: onToggleViewAll) {
+                        Text(isExpanded ? "Show Less" : "View All")
+                            .font(.caption.weight(.black))
+                            .foregroundStyle(Theme.gold)
+                            .padding(.horizontal, 13)
+                            .padding(.vertical, 8)
+                            .background(Theme.selected, in: Capsule())
                     }
+                    .buttonStyle(.plain)
                 }
+            }
 
+            Card {
                 if isExpanded {
                     LazyVGrid(columns: columns, spacing: 12) {
                         ForEach(visibleProducts) { product in
@@ -1106,6 +1116,11 @@ private struct ProductGridCard: View {
                         .font(.caption.weight(.bold))
                         .foregroundStyle(Theme.muted)
                         .lineLimit(1)
+                    if !product.existsInDB {
+                        Text("Not in DB • Need DB Sync")
+                            .font(.system(size: 9, weight: .black))
+                            .foregroundStyle(.red)
+                    }
                 }
 
                 Spacer(minLength: 8)
@@ -1173,6 +1188,7 @@ private struct SellProductDetailCard: View {
         _selectedSize = State(initialValue: product.sizes.first ?? "One size")
         _selectedMaterial = State(initialValue: product.materials.first ?? "Standard")
         _selectedColor = State(initialValue: product.colors.first ?? "Default")
+        _quantity = State(initialValue: product.stockQuantity > 0 ? 1 : 0)
     }
 
     var body: some View {
@@ -1210,6 +1226,13 @@ private struct SellProductDetailCard: View {
                         }
                     }
 
+                    if !product.existsInDB {
+                        Text("Product not found in database. Need DB Sync.")
+                            .font(.subheadline.weight(.black))
+                            .foregroundStyle(.red)
+                            .padding(.top, 2)
+                    }
+
                     Text(product.suggestedReason)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Theme.muted)
@@ -1234,10 +1257,10 @@ private struct SellProductDetailCard: View {
 
                     HStack(spacing: 10) {
                         QuantityButton(symbol: "minus") {
-                            quantity = max(1, quantity - 1)
+                            quantity = max(product.stockQuantity > 0 ? 1 : 0, quantity - 1)
                         }
                         QuantityButton(symbol: "plus") {
-                            quantity += 1
+                            quantity = min(quantity + 1, product.stockQuantity)
                         }
                     }
                 }
@@ -1274,13 +1297,14 @@ private struct SellProductDetailCard: View {
                         Button {
                             onAddToCart(quantity)
                         } label: {
-                            Label("Add to Cart", systemImage: "bag.badge.plus")
+                            Label(product.stockQuantity > 0 ? "Add to Cart" : "Out of Stock", systemImage: product.stockQuantity > 0 ? "bag.badge.plus" : "exclamationmark.triangle")
                                 .font(.headline.weight(.black))
                                 .frame(maxWidth: .infinity, minHeight: 54)
-                                .foregroundStyle(.white)
-                                .background(Theme.goldGradient, in: Capsule())
+                                .foregroundStyle(product.stockQuantity > 0 ? .white : Theme.muted)
+                                .background(product.stockQuantity > 0 ? AnyShapeStyle(Theme.goldGradient) : AnyShapeStyle(Color.gray.opacity(0.24)), in: Capsule())
                         }
                         .buttonStyle(.plain)
+                        .disabled(product.stockQuantity == 0)
                     }
                 }
             }
@@ -2058,9 +2082,31 @@ private struct CreateClientProfilePanel: View {
     private let brands = ["N/A", "Bvlgari", "Cartier", "Dior", "Gucci", "Hermes", "Jimmy Choo", "Louis Vuitton", "Rolex", "Titan"]
     private let contactMethods = ["Phone", "WhatsApp", "Email", "SMS"]
 
+    private var isNameValid: Bool {
+        let trimmed = fullName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2 else { return false }
+        let letterAndSpaceSet = CharacterSet.letters.union(.whitespaces)
+        return trimmed.unicodeScalars.allSatisfy { letterAndSpaceSet.contains($0) }
+    }
+    
+    private var isPhoneValid: Bool {
+        let trimmed = phone.trimmingCharacters(in: .whitespacesAndNewlines)
+        let digitsOnly = trimmed.filter { $0.isNumber }
+        guard digitsOnly.count >= 10 else { return false }
+        let allowedSet = CharacterSet(charactersIn: "+-() ").union(.decimalDigits)
+        return trimmed.unicodeScalars.allSatisfy { allowedSet.contains($0) }
+    }
+    
+    private var isEmailValid: Bool {
+        let trimmed = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return true }
+        let emailRegEx = "[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,64}"
+        let emailPred = NSPredicate(format:"SELF MATCHES %@", emailRegEx)
+        return emailPred.evaluate(with: trimmed)
+    }
+    
     private var canSave: Bool {
-        !fullName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !phone.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        isNameValid && isPhoneValid && isEmailValid
     }
 
     private var formColumns: [GridItem] {
@@ -2098,9 +2144,36 @@ private struct CreateClientProfilePanel: View {
                     VStack(alignment: .leading, spacing: 16) {
                         ProfileFormSection(title: "Identity") {
                             LazyVGrid(columns: formColumns, spacing: 12) {
-                                ProfileTextField(title: "Name *", placeholder: "Client name", text: $fullName)
-                                ProfileTextField(title: "Phone *", placeholder: "+91 phone number", text: $phone)
-                                ProfileTextField(title: "Email", placeholder: "optional email", text: $email)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    ProfileTextField(title: "Name *", placeholder: "Client name", text: $fullName)
+                                    if !fullName.isEmpty && !isNameValid {
+                                        Text("Letters and spaces only (min 2)")
+                                            .font(.caption2.weight(.semibold))
+                                            .foregroundStyle(.red)
+                                            .padding(.horizontal, 4)
+                                    }
+                                }
+                                
+                                VStack(alignment: .leading, spacing: 4) {
+                                    ProfileTextField(title: "Phone *", placeholder: "+91 phone number", text: $phone)
+                                    if !phone.isEmpty && !isPhoneValid {
+                                        Text("Invalid format (min 10 digits)")
+                                            .font(.caption2.weight(.semibold))
+                                            .foregroundStyle(.red)
+                                            .padding(.horizontal, 4)
+                                    }
+                                }
+                                
+                                VStack(alignment: .leading, spacing: 4) {
+                                    ProfileTextField(title: "Email", placeholder: "optional email", text: $email)
+                                    if !email.isEmpty && !isEmailValid {
+                                        Text("Invalid email format")
+                                            .font(.caption2.weight(.semibold))
+                                            .foregroundStyle(.red)
+                                            .padding(.horizontal, 4)
+                                    }
+                                }
+                                
                                 ProfileTextField(title: "Birthday", placeholder: "DD MMM or birth date", text: $birthday)
                                 ProfileDropdown(title: "Preferred Language", options: languages, selection: $preferredLanguage)
                             }

@@ -34,13 +34,12 @@ extension SalesAssociateDashboard {
         quickActions: [
             QuickAction(icon: "person.badge.plus", title: "Start Client", isPrimary: true),
             QuickAction(icon: "calendar.badge.clock", title: "Appointments", isPrimary: false),
-            QuickAction(icon: "list.clipboard", title: "Issue", isPrimary: false),
+            QuickAction(icon: "checklist", title: "Daily Tasks", isPrimary: false),
             QuickAction(icon: "viewfinder", title: "Scan Item", isPrimary: false)
         ],
         metrics: [
             DashboardMetric(title: "Open Carts", value: "11"),
-            DashboardMetric(title: "Follow-ups", value: "09"),
-            DashboardMetric(title: "VIP Today", value: "03")
+            DashboardMetric(title: "Follow-ups", value: "09")
         ],
         weeklySales: WeeklySalesSummary(
             total: "Rs. 1.18L",
@@ -97,13 +96,12 @@ extension SalesAssociateDashboard {
             quickActions: [
                 QuickAction(icon: "person.badge.plus", title: "Start Client", isPrimary: true),
                 QuickAction(icon: "calendar.badge.clock", title: "Appointments", isPrimary: false),
-                QuickAction(icon: "list.clipboard", title: "Issue", isPrimary: false),
+                QuickAction(icon: "checklist", title: "Daily Tasks", isPrimary: false),
                 QuickAction(icon: "viewfinder", title: "Scan Item", isPrimary: false)
             ],
             metrics: [
                 DashboardMetric(title: "Open Carts", value: "05"),
-                DashboardMetric(title: "Follow-ups", value: "14"),
-                DashboardMetric(title: "VIP Today", value: "05")
+                DashboardMetric(title: "Follow-ups", value: "14")
             ],
             weeklySales: WeeklySalesSummary(
                 total: "Rs. 2.10L",
@@ -157,13 +155,12 @@ extension SalesAssociateDashboard {
             quickActions: [
                 QuickAction(icon: "person.badge.plus", title: "Start Client", isPrimary: true),
                 QuickAction(icon: "calendar.badge.clock", title: "Appointments", isPrimary: false),
-                QuickAction(icon: "list.clipboard", title: "Issue", isPrimary: false),
+                QuickAction(icon: "checklist", title: "Daily Tasks", isPrimary: false),
                 QuickAction(icon: "viewfinder", title: "Scan Item", isPrimary: false)
             ],
             metrics: [
                 DashboardMetric(title: "Open Carts", value: "08"),
-                DashboardMetric(title: "Follow-ups", value: "11"),
-                DashboardMetric(title: "VIP Today", value: "02")
+                DashboardMetric(title: "Follow-ups", value: "11")
             ],
             weeklySales: WeeklySalesSummary(
                 total: "Rs. 1.45L",
@@ -282,12 +279,9 @@ extension IssueDashboard {
 extension ProductCategory {
     static let sampleCategories: [ProductCategory] = [
         ProductCategory(id: "handbags", title: "Handbags", icon: "handbag"),
-        ProductCategory(id: "clutches", title: "Clutches", icon: "bag"),
         ProductCategory(id: "watches", title: "Watches", icon: "applewatch"),
-        ProductCategory(id: "jewellery", title: "Jewellery", icon: "sparkles"),
-        ProductCategory(id: "necklaces", title: "Necklaces", icon: "star.circle"),
-        ProductCategory(id: "footwear", title: "Footwear", icon: "shoeprints.fill"),
-        ProductCategory(id: "accessories", title: "Accessories", icon: "sunglasses")
+        ProductCategory(id: "fragrances", title: "Fragrances", icon: "wind"),
+        ProductCategory(id: "footwear", title: "Footwear", icon: "shoeprints.fill")
     ]
 }
 

@@ -1465,7 +1465,7 @@ private struct ClientPreferenceEditPanel: View {
     }
 }
 
-private struct ClientAvatar: View {
+struct ClientAvatar: View {
     let initials: String
     let size: CGFloat
 

@@ -83,15 +83,19 @@ struct SellingSessionState: Equatable {
     }
 
     mutating func addToCart(_ product: SalesProduct, quantity: Int = 1) {
-        let resolvedQuantity = max(1, quantity)
+        let maxAvailable = product.stockQuantity
+        let currentInCart = cartQuantitiesByProductID[product.id] ?? 0
+        let allowedToAdd = min(quantity, maxAvailable - currentInCart)
+        guard allowedToAdd > 0 else { return }
+        
         if !cartProductIDs.contains(product.id) {
             cartProductIDs.append(product.id)
         }
-        cartQuantitiesByProductID[product.id, default: 0] += resolvedQuantity
+        cartQuantitiesByProductID[product.id, default: 0] += allowedToAdd
     }
 
     mutating func setCartQuantity(_ quantity: Int, for product: SalesProduct) {
-        let resolvedQuantity = max(1, quantity)
+        let resolvedQuantity = min(max(1, quantity), product.stockQuantity)
         if !cartProductIDs.contains(product.id) {
             cartProductIDs.append(product.id)
         }
