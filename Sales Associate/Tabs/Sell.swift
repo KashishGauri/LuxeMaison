@@ -16,10 +16,9 @@ struct SellContent: View {
     @State private var selectedProduct: SalesProduct?
     @State private var returnPanelAfterProfile: SellingSessionPanel = .wishlist
     @State private var isFilterPresented = false
-    @State private var audienceFilter = SellAudienceFilter.all
-    @State private var availabilityFilter = SellAvailabilityFilter.all
-    @State private var priceFilter = SellPriceFilter.all
-    @State private var showsDiscountedOnly = false
+    @State private var brandFilter: String = "All"
+    /// Max price cap (in lakhs) from the price slider. 0 = no cap (show all).
+    @State private var maxPriceLakhs: Double = 0
     @State private var expandedCategoryIDs: Set<String> = []
     @State private var isTopSuggestionsExpanded = false
     @State private var paymentFulfillment: PaymentFulfillmentSummary?
@@ -86,14 +85,27 @@ struct SellContent: View {
         expandedCategoryIDs.contains(selectedCategoryID)
     }
 
+    /// Distinct product brands (from the Supabase `brand` column), for the brand filter.
+    private var availableBrands: [String] {
+        let brands = Set(products.map { $0.brand.trimmingCharacters(in: .whitespacesAndNewlines) })
+            .filter { !$0.isEmpty }
+        return ["All"] + brands.sorted()
+    }
+
+    /// Min/max product price (in lakhs) — the price slider's bounds.
+    private var priceBounds: (min: Double, max: Double) {
+        let prices = products.map { $0.priceValue }.filter { $0 > 0 }
+        guard let lo = prices.min(), let hi = prices.max(), hi > lo else {
+            return (0, 10)
+        }
+        return ((floor(lo * 10) / 10), (ceil(hi * 10) / 10))
+    }
+
     private func applyActiveFilters(to sourceProducts: [SalesProduct]) -> [SalesProduct] {
         sourceProducts.filter { product in
-            // Billing only browses sellable stock — out-of-stock products are hidden.
-            product.isInStock
-                && audienceFilter.matches(product)
-                && availabilityFilter.matches(product)
-                && priceFilter.matches(product)
-                && (!showsDiscountedOnly || product.originalPrice != nil)
+            product.isInStock                                              // sellable stock (StoreInventory)
+                && (brandFilter == "All" || product.brand == brandFilter)       // Product.brand
+                && (maxPriceLakhs <= 0 || product.priceValue <= maxPriceLakhs + 0.0001)  // Product.basePrice
         }
     }
 
@@ -324,12 +336,12 @@ struct SellContent: View {
         .animation(.snappy(duration: 0.28), value: selectedProduct)
         .sheet(isPresented: $isFilterPresented) {
             SellFilterPanel(
-                audienceFilter: $audienceFilter,
-                availabilityFilter: $availabilityFilter,
-                priceFilter: $priceFilter,
-                showsDiscountedOnly: $showsDiscountedOnly
+                brands: availableBrands,
+                brandFilter: $brandFilter,
+                maxPriceLakhs: $maxPriceLakhs,
+                priceBounds: priceBounds
             )
-            .presentationDetents([.medium, .large])
+            .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
         // Persist wishlist/cart changes for an existing client straight to
@@ -588,94 +600,29 @@ private struct CategoryStrip: View {
     }
 }
 
-private enum SellAudienceFilter: String, CaseIterable, Identifiable {
-    case all = "All"
-    case women = "Women"
-    case men = "Men"
-
-    var id: String { rawValue }
-
-    func matches(_ product: SalesProduct) -> Bool {
-        switch self {
-        case .all:
-            return true
-        case .women, .men:
-            return product.audience.localizedCaseInsensitiveContains(rawValue)
-        }
-    }
-}
-
-private enum SellAvailabilityFilter: String, CaseIterable, Identifiable {
-    case all = "All"
-    case inBoutique = "In Boutique"
-    case transfer = "Transfer"
-    case limited = "Limited"
-
-    var id: String { rawValue }
-
-    func matches(_ product: SalesProduct) -> Bool {
-        switch self {
-        case .all:
-            return true
-        case .inBoutique:
-            return product.availability.localizedCaseInsensitiveContains("boutique")
-        case .transfer:
-            return product.availability.localizedCaseInsensitiveContains("transfer")
-                || product.stockNote.localizedCaseInsensitiveContains("transfer")
-                || product.availability.localizedCaseInsensitiveContains("store manager")
-        case .limited:
-            return product.badge?.localizedCaseInsensitiveContains("limited") == true
-                || product.stockNote.localizedCaseInsensitiveContains("limited")
-        }
-    }
-}
-
-private enum SellPriceFilter: String, CaseIterable, Identifiable {
-    case all = "All"
-    case underOnePointFive = "Under Rs. 1.5L"
-    case onePointFiveToThree = "Rs. 1.5L - 3L"
-    case aboveThree = "Above Rs. 3L"
-
-    var id: String { rawValue }
-
-    func matches(_ product: SalesProduct) -> Bool {
-        guard let price = product.priceInLakhs else {
-            return self == .all
-        }
-
-        switch self {
-        case .all:
-            return true
-        case .underOnePointFive:
-            return price < 1.5
-        case .onePointFiveToThree:
-            return price >= 1.5 && price <= 3
-        case .aboveThree:
-            return price > 3
-        }
-    }
-}
-
-private extension SalesProduct {
-    var priceInLakhs: Double? {
-        let normalized = price
-            .replacingOccurrences(of: "Rs.", with: "")
-            .replacingOccurrences(of: "₹", with: "")
-            .replacingOccurrences(of: "L", with: "")
-            .replacingOccurrences(of: " ", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        return Double(normalized)
-    }
-}
-
 private struct SellFilterPanel: View {
     @Environment(\.dismiss) private var dismiss
 
-    @Binding var audienceFilter: SellAudienceFilter
-    @Binding var availabilityFilter: SellAvailabilityFilter
-    @Binding var priceFilter: SellPriceFilter
-    @Binding var showsDiscountedOnly: Bool
+    let brands: [String]
+    @Binding var brandFilter: String
+    @Binding var maxPriceLakhs: Double
+    let priceBounds: (min: Double, max: Double)
+
+    /// The slider's shown value — the price cap, defaulting to the max (= no cap).
+    private var effectiveMax: Double {
+        guard maxPriceLakhs > 0, maxPriceLakhs >= priceBounds.min, maxPriceLakhs <= priceBounds.max else {
+            return priceBounds.max
+        }
+        return maxPriceLakhs
+    }
+
+    private var priceSliderBinding: Binding<Double> {
+        Binding(get: { effectiveMax }, set: { maxPriceLakhs = $0 })
+    }
+
+    private func priceLabel(_ lakhs: Double) -> String {
+        lakhs >= 100 ? String(format: "Rs. %.1fCr", lakhs / 100) : String(format: "Rs. %.1fL", lakhs)
+    }
 
     var body: some View {
         ZStack {
@@ -719,67 +666,54 @@ private struct SellFilterPanel: View {
                     .buttonStyle(.plain)
                 }
 
-                HStack(alignment: .top, spacing: 16) {
-                    FilterSection(title: "Audience") {
-                        FilterChipWrap {
-                            ForEach(SellAudienceFilter.allCases) { option in
-                                SellFilterChip(
-                                    title: option.rawValue,
-                                    isSelected: audienceFilter == option
-                                ) {
-                                    audienceFilter = option
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        FilterSection(title: "Brand") {
+                            FilterChipWrap {
+                                ForEach(brands, id: \.self) { brand in
+                                    SellFilterChip(
+                                        title: brand,
+                                        isSelected: brandFilter == brand
+                                    ) {
+                                        brandFilter = brand
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    FilterSection(title: "Availability") {
-                        FilterChipWrap {
-                            ForEach(SellAvailabilityFilter.allCases) { option in
-                                SellFilterChip(
-                                    title: option.rawValue,
-                                    isSelected: availabilityFilter == option
-                                ) {
-                                    availabilityFilter = option
+                        FilterSection(title: "Price") {
+                            VStack(alignment: .leading, spacing: 14) {
+                                HStack {
+                                    Text("Up to")
+                                        .font(.subheadline.weight(.bold))
+                                        .foregroundStyle(Theme.muted)
+                                    Spacer()
+                                    Text(priceLabel(effectiveMax))
+                                        .font(.title3.weight(.black))
+                                        .foregroundStyle(Theme.gold)
+                                        .monospacedDigit()
                                 }
+
+                                Slider(
+                                    value: priceSliderBinding,
+                                    in: priceBounds.min...priceBounds.max,
+                                    step: 0.1
+                                )
+                                .tint(Theme.gold)
+
+                                HStack {
+                                    Text(priceLabel(priceBounds.min))
+                                    Spacer()
+                                    Text(priceLabel(priceBounds.max))
+                                }
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(Theme.muted)
                             }
                         }
                     }
+                    .padding(.bottom, 4)
                 }
-
-                HStack(alignment: .top, spacing: 16) {
-                    FilterSection(title: "Price Range") {
-                        FilterChipWrap {
-                            ForEach(SellPriceFilter.allCases) { option in
-                                SellFilterChip(
-                                    title: option.rawValue,
-                                    isSelected: priceFilter == option
-                                ) {
-                                    priceFilter = option
-                                }
-                            }
-                        }
-                    }
-
-                    FilterSection(title: "Offers") {
-                        Toggle(isOn: $showsDiscountedOnly) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Discounted pieces only")
-                                    .font(.headline.weight(.black))
-                                    .foregroundStyle(Theme.ink)
-                                Text("Show products that have a listed original price.")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(Theme.muted)
-                            }
-                        }
-                        .toggleStyle(.switch)
-                        .tint(Theme.gold)
-                        .padding(16)
-                        .background(.white.opacity(0.58), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    }
-                }
-
-                Spacer(minLength: 0)
+                .scrollIndicators(.hidden)
 
                 Button {
                     dismiss()
@@ -797,10 +731,8 @@ private struct SellFilterPanel: View {
     }
 
     private func resetFilters() {
-        audienceFilter = .all
-        availabilityFilter = .all
-        priceFilter = .all
-        showsDiscountedOnly = false
+        brandFilter = "All"
+        maxPriceLakhs = 0
     }
 }
 
