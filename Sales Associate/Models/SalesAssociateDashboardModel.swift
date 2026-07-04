@@ -498,6 +498,11 @@ struct ClientPurchase: Identifiable, Equatable, Codable {
     var hsn: String? = nil
     var gstRate: Double? = nil
     var invoiceNumber: String? = nil
+    // Fulfilment captured at checkout so a re-opened receipt rebuilds correctly.
+    // "pickup" / "delivery"; address + tracking id are delivery-only.
+    var fulfillmentKind: String? = nil
+    var deliveryAddress: String? = nil
+    var trackingID: String? = nil
 }
 
 struct ClientAttribute: Identifiable, Equatable, Codable {

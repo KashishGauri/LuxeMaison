@@ -64,7 +64,7 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
-  await supabase.from("payment_orders").insert({
+  const { error: trackingError } = await supabase.from("payment_orders").insert({
     local_order_id: localOrderId,
     qr_id: qr.id,
     amount_paise: amountPaise,
@@ -72,6 +72,14 @@ Deno.serve(async (req) => {
     close_by: new Date(closeBy * 1000).toISOString(),
     raw: qr,
   });
+  if (trackingError) {
+    // Do not show a QR that cannot be resolved by webhook/polling; otherwise the
+    // customer can pay while the app remains stuck before receipt generation.
+    return json({
+      error: "Unable to initialise payment status tracking",
+      detail: trackingError.message,
+    }, 500);
+  }
 
   return json({
     qrId: qr.id,

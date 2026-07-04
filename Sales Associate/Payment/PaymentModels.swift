@@ -123,6 +123,9 @@ struct FrozenOrder: Equatable {
     // Backend-issued at finalize (nil until then).
     var invoiceNumber: String?
     var irn: String?
+    /// Courier tracking id, issued at finalize for delivery orders only
+    /// (nil for pickup / until finalized).
+    var trackingID: String?
 
     var taxablePaise: Int { lineItems.reduce(0) { $0 + $1.taxablePaise } }
     var taxPaise: Int { lineItems.reduce(0) { $0 + $1.taxPaise } }

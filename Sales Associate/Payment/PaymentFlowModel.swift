@@ -39,10 +39,10 @@ final class PaymentFlowModel: ObservableObject {
     private var qrSessionGeneration = 0
     private var lastStatusCheck: Date = .distantPast
 
-    init(order: FrozenOrder, scenario: DemoScenario = .happyPath, config: PaymentConfig = .default) {
+    init(order: FrozenOrder, scenario: DemoScenario = .happyPath, config: PaymentConfig? = nil) {
         self.order = order
         self.scenario = scenario
-        self.config = config
+        self.config = config ?? PaymentConfig()
     }
 
     // MARK: Derived amounts
@@ -92,22 +92,13 @@ final class PaymentFlowModel: ObservableObject {
     // MARK: PAY-00 — create & freeze order
 
     func start() {
-        // Live: go straight to the Razorpay hosted page after "Proceed to Pay".
-        // Razorpay's own checkout collects the customer's phone (for OTP).
-        if useLiveGateway {
-            if order.totalPaise > 0 {
-                startHostedCheckout()
-            } else {
-                setStage(.methodSelect)   // empty cart — show a clear message instead
-            }
-            return
-        }
-
-        // Mock catalogue path.
+        // Always show the method picker after freezing the order. Previously the
+        // live flow auto-presented Razorpay, so the Card row was never a stable,
+        // tappable entry point and presentation timing could swallow the first tap.
         setStage(.creatingOrder)
-        schedule(1.3, expecting: .creatingOrder) { [weak self] in
+        schedule(useLiveGateway ? 0.45 : 1.3, expecting: .creatingOrder) { [weak self] in
             guard let self else { return }
-            if self.scenario == .orderCreateFails {
+            if !self.useLiveGateway, self.scenario == .orderCreateFails {
                 self.setStage(.orderCreateFailed)
             } else {
                 self.beginReservation()
@@ -155,7 +146,11 @@ final class PaymentFlowModel: ObservableObject {
         case .upiQR:
             if isAboveQRCap { setStage(.aboveCap) } else { generateQR(amountPaise: remainingPaise) }
         case .card:
-            beginVerification(for: .card, amountPaise: remainingPaise)
+            if useLiveGateway {
+                startHostedCheckout()
+            } else {
+                beginVerification(for: .card, amountPaise: remainingPaise)
+            }
         case .cash:
             cashReceivedPaise = 0
             setStage(.cashEntry)
@@ -304,17 +299,26 @@ final class PaymentFlowModel: ObservableObject {
         qrCloseBy = nil
         hostedCheckoutURL = nil
         addTender(method: method, amountPaise: amountPaise, status: .successful, reference: paymentID)
-        if remainingPaise > 0 { setStage(.methodSelect) } else { beginFinalize() }
+        if remainingPaise > 0 {
+            setStage(method == .card ? .splitCardPaidQRPending : .methodSelect)
+        } else {
+            beginFinalize()
+        }
     }
 
     // MARK: Live hosted checkout (Razorpay payment link → card / UPI / QR)
 
-    func startHostedCheckout() {
+    func startHostedCheckout(amountPaise requestedAmountPaise: Int? = nil) {
         qrSessionGeneration += 1
         let session = qrSessionGeneration
         gatewayError = nil
         hostedCheckoutURL = nil
-        activeQRAmountPaise = remainingPaise
+        let checkoutAmount = min(max(0, requestedAmountPaise ?? remainingPaise), remainingPaise)
+        guard checkoutAmount > 0 else {
+            setStage(.methodSelect)
+            return
+        }
+        activeQRAmountPaise = checkoutAmount
         setStage(.hostedCheckout)
 
         Task { @MainActor [weak self] in
@@ -322,7 +326,7 @@ final class PaymentFlowModel: ObservableObject {
             do {
                 let result = try await RazorpayGatewayService.shared.createPaymentLink(
                     localOrderID: self.order.orderID,
-                    amountPaise: self.remainingPaise,
+                    amountPaise: checkoutAmount,
                     description: "Order \(self.order.orderID) — \(self.order.clientName)"
                 )
                 guard session == self.qrSessionGeneration else { return }
@@ -346,7 +350,7 @@ final class PaymentFlowModel: ObservableObject {
                     let status = try await RazorpayGatewayService.shared.fetchStatus(qrID: id)
                     guard session == self.qrSessionGeneration else { return }
                     if status.status == .paid {
-                        self.handleLivePaid(amountPaise: status.amountPaidPaise ?? self.order.totalPaise, paymentID: status.paymentID, method: .card)
+                        self.handleLivePaid(amountPaise: status.amountPaidPaise ?? self.activeQRAmountPaise, paymentID: status.paymentID, method: .card)
                         return
                     }
                 } catch {
@@ -446,7 +450,11 @@ final class PaymentFlowModel: ObservableObject {
 
     func chargeCardLeg() {
         let amount = min(max(splitCardAmountPaise, config.cardMinPaise), order.totalPaise)
-        beginVerification(for: .card, amountPaise: amount)
+        if useLiveGateway {
+            startHostedCheckout(amountPaise: amount)
+        } else {
+            beginVerification(for: .card, amountPaise: amount)
+        }
     }
 
     func generateRemainderQR() {
@@ -511,6 +519,14 @@ final class PaymentFlowModel: ObservableObject {
         order.invoiceNumber = "LM/26-27/\(String(format: "%05d", Int.random(in: 1...99999)))"
         if order.buyerType.isBusiness {
             order.irn = String((UUID().uuidString + UUID().uuidString).prefix(64)).lowercased()
+        }
+        // Delivery orders get a courier tracking id (demo placeholder until a real
+        // logistics integration issues one). Pickup orders carry no tracking.
+        // Build the digits one at a time — `String(format: "%010d", …)` truncates a
+        // 64-bit Int to 32 bits and can emit negative/garbled numbers.
+        if order.fulfillment.kind == .delivery {
+            let digits = (0..<10).map { _ in String(Int.random(in: 0...9)) }.joined()
+            order.trackingID = "LMX\(digits)IN"
         }
     }
 

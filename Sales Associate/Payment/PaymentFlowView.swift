@@ -108,7 +108,16 @@ struct PaymentFlowView: View {
         .onChange(of: model.stage) { _, newStage in
             guard !hasRecordedSale, newStage == .receipt || newStage == .success else { return }
             hasRecordedSale = true
-            onOrderFinalized(model.order, model.paymentSummary)
+            // Defer to the next run-loop tick so the heavy recording work (stock
+            // decrement, Supabase calls) and the parent @State
+            // mutations it triggers don't run *inside* this stage-change transaction.
+            // Doing it inline can interrupt the completing→receipt view swap and
+            // strand the "completing" spinner even though the model reached .receipt.
+            let finalizedOrder = model.order
+            let payment = model.paymentSummary
+            DispatchQueue.main.async {
+                onOrderFinalized(finalizedOrder, payment)
+            }
         }
     }
 

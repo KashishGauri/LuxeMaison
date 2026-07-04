@@ -61,13 +61,21 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
-  await supabase.from("payment_orders").insert({
+  const { error: trackingError } = await supabase.from("payment_orders").insert({
     local_order_id: localOrderId,
     qr_id: link.id, // reuse the external-id column (plink_… vs qr_…)
     amount_paise: amountPaise,
     status: "created",
     raw: link,
   });
+  if (trackingError) {
+    // Never expose a payable link that the app cannot subsequently resolve. If
+    // tracking is missing, a successful payment polls as unknown forever.
+    return json({
+      error: "Unable to initialise payment status tracking",
+      detail: trackingError.message,
+    }, 500);
+  }
 
   return json({
     linkId: link.id,

@@ -282,21 +282,27 @@ struct SalesAssociateRootView: View {
     }
 
     private func syncProfilesWithSupabase() async {
+        removeLegacyClientProfileCache()
         print("Supabase Sync: Loading client profiles from Supabase...")
         do {
             let dbProfiles = try await SupabaseDBService.shared.fetchProfiles()
             print("Supabase Sync: Fetched \(dbProfiles.count) profiles from DB.")
-            // Client data is Supabase-only — always mirror the DB (even when empty),
-            // and never upload local/dummy profiles to seed it.
+            // Client data is Supabase-only — always mirror the DB (even when empty).
             await MainActor.run {
                 self.clientProfiles = dbProfiles
-                ClientProfileJSONStore.saveProfiles(dbProfiles)
                 print("Supabase Sync: Client profiles loaded from Supabase.")
             }
         } catch {
             print("Supabase Sync ERROR: \(error)")
             print("Supabase Sync ERROR Details: \(error.localizedDescription)")
         }
+    }
+
+    /// Removes the obsolete local profile/history JSON created by older builds.
+    /// Current builds neither read nor write this file; Supabase is the sole source.
+    private func removeLegacyClientProfileCache() {
+        let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        try? FileManager.default.removeItem(at: documentsURL.appendingPathComponent("client-profiles.json"))
     }
 
     private func formatPrice(_ amount: Double) -> String {
@@ -597,7 +603,6 @@ struct TodayDashboardView: View {
     private func saveCreatedProfile(_ profile: ClientProfile) {
         clientProfiles.removeAll { $0.id == profile.id }
         clientProfiles.insert(profile, at: 0)
-        ClientProfileJSONStore.saveProfiles(clientProfiles)
         recentlyViewedClients.removeAll { $0.id == profile.id }
         recentlyViewedClients.insert(profile, at: 0)
         
@@ -698,7 +703,9 @@ struct TodayDashboardView: View {
                     amountPaid: amountPaidRupees,
                     itemCount: itemCount,
                     receiptDate: saleDate,
-                    time: saleTime
+                    time: saleTime,
+                    trackingID: order.trackingID,
+                    deliveryAddress: order.fulfillment.kind == .delivery ? order.fulfillment.address : nil
                 )
             }
             // Refresh from Supabase so the Stock tab reflects the DB quantities and
@@ -727,7 +734,10 @@ struct TodayDashboardView: View {
                 grossPaise: item.grossInclusivePaise,
                 hsn: item.classification.hsn,
                 gstRate: item.classification.rate,
-                invoiceNumber: order.invoiceNumber
+                invoiceNumber: order.invoiceNumber,
+                fulfillmentKind: order.fulfillment.kind == .delivery ? "delivery" : "pickup",
+                deliveryAddress: order.fulfillment.kind == .delivery ? order.fulfillment.address : nil,
+                trackingID: order.trackingID
             )
         }
         guard !newPurchases.isEmpty else { return }
@@ -735,13 +745,22 @@ struct TodayDashboardView: View {
         let updatedClient = client.addingPurchases(newPurchases)
         clientProfiles.removeAll { $0.id == updatedClient.id }
         clientProfiles.insert(updatedClient, at: 0)
-        ClientProfileJSONStore.saveProfiles(clientProfiles)
         recentlyViewedClients.removeAll { $0.id == updatedClient.id }
         recentlyViewedClients.insert(updatedClient, at: 0)
 
         Task {
             do {
                 try await SupabaseDBService.shared.upsertProfile(updatedClient)
+                // Replace the optimistic value with the row decoded back from
+                // Supabase. Purchase history therefore remains DB-sourced and a
+                // schema/encoding mismatch cannot masquerade as a saved purchase.
+                let dbProfiles = try await SupabaseDBService.shared.fetchProfiles()
+                await MainActor.run {
+                    clientProfiles = dbProfiles
+                    recentlyViewedClients = recentlyViewedClients.compactMap { recent in
+                        dbProfiles.first { $0.id == recent.id }
+                    }
+                }
             } catch {
                 #if DEBUG
                 print("Failed to sync purchase history to Supabase: \(error)")
@@ -1788,4 +1807,3 @@ private struct DailyTasksSheet: View {
         .frame(minWidth: 460, minHeight: 520)
     }
 }
-

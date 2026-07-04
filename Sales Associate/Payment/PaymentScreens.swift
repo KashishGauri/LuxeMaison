@@ -70,33 +70,31 @@ struct MethodSelectView: View {
                     GSTINRow(model: model)
 
                     if model.useLiveGateway {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Label("Card · UPI · QR · Netbanking — all on Razorpay's secure page.", systemImage: "lock.shield.fill")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(Theme.muted)
-                                .fixedSize(horizontal: false, vertical: true)
-                            if model.remainingPaise == 0 {
-                                Label("Cart is empty — add products to the cart before taking payment.", systemImage: "bag.badge.questionmark")
-                                    .font(.caption.weight(.bold))
-                                    .foregroundStyle(PaymentTone.warning.color)
-                            }
-                            PaymentPrimaryButton(title: "Pay \(IndianMoney.format(paise: model.remainingPaise)) with Razorpay", systemImage: "creditcard", isEnabled: model.remainingPaise > 0) {
-                                model.startHostedCheckout()
-                            }
-                        }
-                        .padding(.top, 4)
-                    } else {
-                        ForEach(PaymentMethodKind.allCases) { method in
-                            PaymentMethodCard(method: method) { model.selectMethod(method) }
-                        }
+                        Label("Card opens Razorpay's secure hosted checkout. UPI QR is generated directly for this order.", systemImage: "lock.shield.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Theme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
 
-                        if model.isAboveQRCap {
-                            Label("UPI QR is capped at \(IndianMoney.format(paise: model.config.upiQrCapPaise)) — larger orders route to Split or Card.",
-                                  systemImage: "info.circle")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(Theme.muted)
-                                .padding(.top, 2)
+                    ForEach(PaymentMethodKind.allCases) { method in
+                        PaymentMethodCard(
+                            method: method,
+                            isDisabled: model.remainingPaise == 0
+                        ) {
+                            model.selectMethod(method)
                         }
+                    }
+
+                    if model.remainingPaise == 0 {
+                        Label("Cart is empty — add products to the cart before taking payment.", systemImage: "bag.badge.questionmark")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(PaymentTone.warning.color)
+                    } else if model.isAboveQRCap {
+                        Label("UPI QR is capped at \(IndianMoney.format(paise: model.config.upiQrCapPaise)) — larger orders route to Split or Card.",
+                              systemImage: "info.circle")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Theme.muted)
+                            .padding(.top, 2)
                     }
                 }
                 .padding(.bottom, 8)
@@ -347,7 +345,7 @@ struct QRExpiredView: View {
 
 struct HostedCheckoutView: View {
     @ObservedObject var model: PaymentFlowModel
-    @State private var showSafari = false
+    @State private var presentedCheckout: HostedCheckoutDestination?
 
     var body: some View {
         VStack(spacing: 16) {
@@ -359,21 +357,31 @@ struct HostedCheckoutView: View {
                 isBusy: true
             )
             if model.hostedCheckoutURL != nil {
-                PaymentSecondaryButton(title: "Reopen Razorpay", systemImage: "safari") { showSafari = true }
+                PaymentSecondaryButton(title: "Reopen Razorpay", systemImage: "safari") {
+                    presentCheckoutIfReady()
+                }
             }
             PaymentSecondaryButton(title: "Cancel payment", systemImage: "xmark") { model.cancelHostedCheckout() }
         }
-        .onAppear { showSafari = (model.hostedCheckoutURL != nil) }
+        .onAppear { presentCheckoutIfReady() }
         .onChange(of: model.hostedCheckoutURL) { _, url in
-            showSafari = (url != nil)
+            presentedCheckout = url.map(HostedCheckoutDestination.init(url:))
         }
-        .fullScreenCover(isPresented: $showSafari) {
-            if let url = model.hostedCheckoutURL {
-                PaymentSafariView(url: url, onFinish: { showSafari = false })
-                    .ignoresSafeArea()
-            }
+        .fullScreenCover(item: $presentedCheckout) { destination in
+            PaymentSafariView(url: destination.url, onFinish: { presentedCheckout = nil })
+                .ignoresSafeArea()
         }
     }
+
+    private func presentCheckoutIfReady() {
+        guard let url = model.hostedCheckoutURL else { return }
+        presentedCheckout = HostedCheckoutDestination(url: url)
+    }
+}
+
+private struct HostedCheckoutDestination: Identifiable {
+    let id = UUID()
+    let url: URL
 }
 
 // MARK: - PAY-05 Split config
