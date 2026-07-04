@@ -1041,10 +1041,20 @@ class SupabaseDBService {
         }
     }
     
-    /// Fetches a receipt by its invoice number from Supabase.
+    /// Fetches a receipt by its invoice number or receipt_id from Supabase.
     func fetchReceipt(byInvoiceNumber invoiceNumber: String) async throws -> DBReceipt? {
-        guard let encodedInvoice = invoiceNumber.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "\(baseURL)/receipt?invoiceNumber=eq.\(encodedInvoice)&select=*") else {
+        guard let encodedInvoice = invoiceNumber.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+            throw URLError(.badURL)
+        }
+        
+        let urlString: String
+        if UUID(uuidString: invoiceNumber.trimmingCharacters(in: .whitespacesAndNewlines)) != nil {
+            urlString = "\(baseURL)/receipt?or=(receipt_id.eq.\(encodedInvoice),invoiceNumber.eq.\(encodedInvoice))&select=*"
+        } else {
+            urlString = "\(baseURL)/receipt?invoiceNumber=eq.\(encodedInvoice)&select=*"
+        }
+        
+        guard let url = URL(string: urlString) else {
             throw URLError(.badURL)
         }
         
