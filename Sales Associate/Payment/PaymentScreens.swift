@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import CoreImage.CIFilterBuiltins
 
 // MARK: - PAY-00 Creating order
 
@@ -214,19 +215,34 @@ struct PaymentField: View {
 struct UPIQRView: View {
     @ObservedObject var model: PaymentFlowModel
     @State private var showDebounceNote = false
+    @State private var qrImageReloadID = UUID()
 
     @ViewBuilder private var qrArea: some View {
-        if let url = model.qrImageURL {
+        if let payload = model.qrPayload {
+            NativeQRCode(payload: payload)
+        } else if let url = model.qrImageURL {
             AsyncImage(url: url) { phase in
                 switch phase {
                 case .success(let image):
                     image.resizable().scaledToFit()
                 case .failure:
-                    MockQRCode(seed: model.order.orderID)
+                    VStack(spacing: 12) {
+                        Image(systemName: "wifi.exclamationmark")
+                            .font(.system(size: 32, weight: .bold))
+                            .foregroundStyle(PaymentTone.warning.color)
+                        Text("QR image couldn't load")
+                            .font(.subheadline.weight(.black))
+                            .foregroundStyle(Theme.ink)
+                        Button("Retry image") { qrImageReloadID = UUID() }
+                            .font(.subheadline.weight(.black))
+                            .foregroundStyle(Theme.gold)
+                    }
+                    .frame(height: 240)
                 default:
                     ProgressView().frame(height: 240)
                 }
             }
+            .id(qrImageReloadID)
         } else if model.useLiveGateway {
             VStack(spacing: 10) {
                 ProgressView()
@@ -313,6 +329,35 @@ struct UPIQRView: View {
             }
             .scrollIndicators(.hidden)
         }
+    }
+}
+
+private struct NativeQRCode: View {
+    let payload: String
+
+    var body: some View {
+        Group {
+            if let image = makeImage() {
+                Image(uiImage: image)
+                    .resizable()
+                    .interpolation(.none)
+                    .scaledToFit()
+                    .accessibilityLabel("UPI scan-to-pay QR code")
+            } else {
+                Label("QR generation failed", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(PaymentTone.danger.color)
+            }
+        }
+        .frame(height: 240)
+    }
+
+    private func makeImage() -> UIImage? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(payload.utf8)
+        filter.correctionLevel = "M"
+        guard let output = filter.outputImage?.transformed(by: CGAffineTransform(scaleX: 10, y: 10)),
+              let cgImage = CIContext().createCGImage(output, from: output.extent) else { return nil }
+        return UIImage(cgImage: cgImage)
     }
 }
 

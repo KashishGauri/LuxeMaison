@@ -30,6 +30,7 @@ final class PaymentFlowModel: ObservableObject {
     // Toggle off in the Demo menu to walk the mock catalogue instead.
     @Published var useLiveGateway = true
     @Published private(set) var qrImageURL: URL?
+    @Published private(set) var qrPayload: String?
     @Published private(set) var hostedCheckoutURL: URL?
     @Published private(set) var gatewayError: String?
 
@@ -37,6 +38,7 @@ final class PaymentFlowModel: ObservableObject {
     private var flowGeneration = 0
     private var reservationGeneration = 0
     private var qrSessionGeneration = 0
+    private var activeQRID: String?
     private var lastStatusCheck: Date = .distantPast
 
     init(order: FrozenOrder, scenario: DemoScenario = .happyPath, config: PaymentConfig? = nil) {
@@ -212,6 +214,7 @@ final class PaymentFlowModel: ObservableObject {
 
     private func generateMockQR(amountPaise: Int) {
         qrImageURL = nil
+        qrPayload = nil
         activeQRAmountPaise = amountPaise
         let expiry = scenario == .qrExpiresThenLateCredit ? 7 : config.qrExpirySeconds
         qrCloseBy = Date().addingTimeInterval(TimeInterval(expiry))
@@ -234,7 +237,9 @@ final class PaymentFlowModel: ObservableObject {
         let session = qrSessionGeneration
         gatewayError = nil
         qrImageURL = nil
+        qrPayload = nil
         qrCloseBy = nil
+        activeQRID = nil
         activeQRAmountPaise = amountPaise
         setStage(.upiQR)   // shows a "generating…" state until the image arrives
 
@@ -248,7 +253,9 @@ final class PaymentFlowModel: ObservableObject {
                     closeBySeconds: self.config.qrExpirySeconds
                 )
                 guard session == self.qrSessionGeneration else { return }
+                self.activeQRID = result.qrID
                 self.qrImageURL = result.imageURL
+                self.qrPayload = result.payload
                 self.qrCloseBy = result.closeBy
                 self.activeQRAmountPaise = result.amountPaise
                 self.startLivePolling(qrID: result.qrID, session: session, closeBy: result.closeBy)
@@ -276,6 +283,12 @@ final class PaymentFlowModel: ObservableObject {
                     if status.status == .paid {
                         self.handleLivePaid(amountPaise: status.amountPaidPaise ?? self.activeQRAmountPaise, paymentID: status.paymentID)
                         return
+                    } else if status.status == .expired, self.stage == .upiQR {
+                        self.setStage(.qrExpired)
+                    } else if status.status == .failed {
+                        self.gatewayError = "UPI QR could not accept payment. Generate a fresh QR or choose another method."
+                        self.switchMethod()
+                        return
                     }
                 } catch {
                     // Network hiccup — keep polling.
@@ -296,7 +309,9 @@ final class PaymentFlowModel: ObservableObject {
         }
         qrSessionGeneration += 1   // stop polling
         qrImageURL = nil
+        qrPayload = nil
         qrCloseBy = nil
+        activeQRID = nil
         hostedCheckoutURL = nil
         addTender(method: method, amountPaise: amountPaise, status: .successful, reference: paymentID)
         if remainingPaise > 0 {
@@ -384,6 +399,8 @@ final class PaymentFlowModel: ObservableObject {
         qrSessionGeneration += 1   // stop any live polling
         qrCloseBy = nil
         qrImageURL = nil
+        qrPayload = nil
+        activeQRID = nil
         setStage(.methodSelect)
     }
 
@@ -394,6 +411,33 @@ final class PaymentFlowModel: ObservableObject {
         let now = Date()
         guard now.timeIntervalSince(lastStatusCheck) > 3 else { return false }
         lastStatusCheck = now
+        if useLiveGateway, let qrID = activeQRID {
+            let session = qrSessionGeneration
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    let status = try await RazorpayGatewayService.shared.fetchStatus(qrID: qrID)
+                    guard session == self.qrSessionGeneration,
+                          self.stage == .upiQR || self.stage == .qrExpired else { return }
+                    switch status.status {
+                    case .paid:
+                        self.handleLivePaid(
+                            amountPaise: status.amountPaidPaise ?? self.activeQRAmountPaise,
+                            paymentID: status.paymentID
+                        )
+                    case .expired:
+                        if self.stage == .upiQR { self.setStage(.qrExpired) }
+                    case .failed:
+                        self.gatewayError = "UPI QR could not accept payment. Generate a fresh QR or choose another method."
+                        self.switchMethod()
+                    case .created, .unknown:
+                        break
+                    }
+                } catch {
+                    self.gatewayError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                }
+            }
+        }
         return true
     }
 

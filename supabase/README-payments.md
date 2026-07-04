@@ -20,24 +20,32 @@ supabase/migrations/0001_payment_orders.sql
 supabase secrets set \
   RAZORPAY_KEY_ID=rzp_test_xxxxxxxx \
   RAZORPAY_KEY_SECRET=xxxxxxxxxxxxxxxx \
-  RAZORPAY_WEBHOOK_SECRET=choose_a_strong_string
+  RAZORPAY_WEBHOOK_SECRET=choose_a_strong_string \
+  APP_LEGACY_ANON_KEY=your_current_app_anon_key
 ```
 `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected automatically.
+
+This merchant currently uses the immediate Payment Link QR fallback. If
+Razorpay Support enables the on-demand QR Codes API later, set
+`RAZORPAY_DIRECT_QR_ENABLED=true` to prefer native `upi_qr` creation.
 
 ## 3. Deploy the functions
 ```sh
 supabase functions deploy razorpay-create-link    --project-ref zfengirsvsjikrhxrfit
-supabase functions deploy razorpay-create-qr      --project-ref zfengirsvsjikrhxrfit
+supabase functions deploy razorpay-create-qr --no-verify-jwt --project-ref zfengirsvsjikrhxrfit
 supabase functions deploy razorpay-payment-status --project-ref zfengirsvsjikrhxrfit
 supabase functions deploy razorpay-webhook --no-verify-jwt --project-ref zfengirsvsjikrhxrfit
 ```
-`--no-verify-jwt` only on the webhook (Razorpay can't send a Supabase JWT). The
-others require the anon JWT the app already sends.
+The webhook cannot send a Supabase JWT. The QR function also uses
+`--no-verify-jwt` because the current Edge gateway rejects this project's legacy
+anon JWT; it explicitly validates `APP_LEGACY_ANON_KEY` internally.
+The remaining functions use gateway JWT verification.
 
 `razorpay-create-link` powers the redirect flow: Proceed to Pay → a hosted
-Razorpay page (card / UPI / QR) opens in an in-app Safari view → after payment
-the app polls status and continues. `razorpay-create-qr` is the older
-UPI-QR-only path (kept for reference).
+Razorpay page (card / UPI / QR) opens in an in-app secure web view → after
+payment the app polls status and continues. `razorpay-create-qr` powers the
+in-app scan-to-pay option: it creates a single-use, fixed-amount dynamic UPI QR
+and stores its gateway id for webhook/poll reconciliation.
 
 ## 4. Configure the webhook (recommended)
 Razorpay Dashboard → Settings → Webhooks → Add:
@@ -49,8 +57,8 @@ Razorpay Dashboard → Settings → Webhooks → Add:
 > Razorpay directly, so testing works — the webhook just makes it instant.
 
 ## 5. Turn it on in the app
-In the payment screen's **Demo** menu, enable **"Live UPI QR (Razorpay)"**.
-Pick UPI QR → a real Razorpay QR renders and the app polls for payment.
+Live Razorpay is enabled by default. Pick **UPI QR** → a real dynamic Razorpay
+QR renders with a 15-minute expiry and the app polls for payment.
 
 ## Test-mode note
 In **test mode** you cannot pay a QR with a real UPI app. Simulate the payment

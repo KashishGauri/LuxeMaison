@@ -19,6 +19,7 @@ enum PaymentGatewayConfig {
 struct QRCreateResult {
     let qrID: String
     let imageURL: URL?
+    let payload: String?
     let closeBy: Date
     let amountPaise: Int
 }
@@ -54,22 +55,25 @@ struct RazorpayGatewayService {
     static let shared = RazorpayGatewayService()
 
     func createQR(localOrderID: String, amountPaise: Int, description: String, closeBySeconds: Int) async throws -> QRCreateResult {
-        let payload: [String: Any] = [
+        let requestPayload: [String: Any] = [
             "localOrderId": localOrderID,
             "amountPaise": amountPaise,
             "description": description,
             "closeBySeconds": closeBySeconds,
         ]
-        let json = try await post("razorpay-create-qr", body: payload)
+        let json = try await post("razorpay-create-qr", body: requestPayload)
 
         guard let qrID = json["qrId"] as? String,
-              let closeByUnix = json["closeBy"] as? Double else {
+              let closeByUnix = (json["closeBy"] as? NSNumber)?.doubleValue else {
             throw GatewayError.decoding
         }
         let imageURL = (json["imageUrl"] as? String).flatMap(URL.init(string:))
+        let payload = json["qrPayload"] as? String
+        guard imageURL != nil || payload != nil else { throw GatewayError.decoding }
         return QRCreateResult(
             qrID: qrID,
             imageURL: imageURL,
+            payload: payload,
             closeBy: Date(timeIntervalSince1970: closeByUnix),
             amountPaise: (json["amountPaise"] as? Int) ?? amountPaise
         )
