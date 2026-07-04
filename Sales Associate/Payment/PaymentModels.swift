@@ -123,6 +123,9 @@ struct FrozenOrder: Equatable {
     // Backend-issued at finalize (nil until then).
     var invoiceNumber: String?
     var irn: String?
+    /// Courier tracking id, issued at finalize for delivery orders only
+    /// (nil for pickup / until finalized).
+    var trackingID: String?
 
     var taxablePaise: Int { lineItems.reduce(0) { $0 + $1.taxablePaise } }
     var taxPaise: Int { lineItems.reduce(0) { $0 + $1.taxPaise } }
@@ -260,7 +263,7 @@ enum PaymentStage: Equatable {
 struct PaymentConfig: Equatable {
     var upiQrCapPaise = 200_000_00        // ₹2,00,000 UPI QR cap
     var cardMinPaise = 100_000_00         // split card leg minimum
-    var qrExpirySeconds = 7 * 60          // 7 min (within Razorpay [2m, 2h])
+    var qrExpirySeconds = 15 * 60         // Razorpay requires close_by >= 15 min
     var verifyingToStillChecking = 20     // seconds
     var stillCheckingToUnknown = 70       // seconds
     var reservationTTLSeconds = 15 * 60   // 15 min

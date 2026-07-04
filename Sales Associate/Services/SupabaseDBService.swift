@@ -1,6 +1,17 @@
 import Foundation
 import UIKit
 
+private enum SupabaseWriteError: LocalizedError {
+    case rejected(status: Int, body: String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .rejected(status, body):
+            return "Supabase rejected the write (HTTP \(status)): \(body)"
+        }
+    }
+}
+
 class SupabaseDBService {
     static let shared = SupabaseDBService()
     
@@ -40,30 +51,56 @@ class SupabaseDBService {
     }
     
     /// Inserts or updates a single client profile in Supabase.
+    ///
+    /// Retries on transient failures (network timeout / 5xx) so a flaky connection
+    /// doesn't silently drop a just-recorded purchase from the client's history —
+    /// this write is how purchase history reaches Supabase. A 4xx (bad payload,
+    /// e.g. a missing column) is not retried since retrying can't fix it.
     func upsertProfile(_ profile: ClientProfile) async throws {
         guard let url = URL(string: "\(baseURL)/client_profiles") else {
             throw URLError(.badURL)
         }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue(anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("resolution=merge-duplicates", forHTTPHeaderField: "Prefer")
-        
+
         let encoder = JSONEncoder()
         var dictionary = try JSONSerialization.jsonObject(with: try encoder.encode(profile)) as? [String: Any] ?? [:]
         dictionary.removeValue(forKey: "tasks")
         let jsonData = try JSONSerialization.data(withJSONObject: dictionary)
-        request.httpBody = jsonData
-        
-        let (_, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse,
-              (httpResponse.statusCode == 200 || httpResponse.statusCode == 201) else {
-            throw URLError(.badServerResponse)
+
+        var lastError: Error = URLError(.badServerResponse)
+        let maxAttempts = 3
+        for attempt in 1...maxAttempts {
+            do {
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue(anonKey, forHTTPHeaderField: "apikey")
+                request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.setValue("resolution=merge-duplicates", forHTTPHeaderField: "Prefer")
+                request.timeoutInterval = 30
+                request.httpBody = jsonData
+
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+                if (200...299).contains(http.statusCode) { return }
+                // Client errors (bad payload / schema) won't be fixed by retrying.
+                if (400...499).contains(http.statusCode) {
+                    let body = String(data: data, encoding: .utf8) ?? ""
+                    print("upsertProfile: HTTP \(http.statusCode) — \(body)")
+                    throw SupabaseWriteError.rejected(status: http.statusCode, body: body)
+                }
+                lastError = URLError(.badServerResponse)   // 5xx — retry
+            } catch let error as SupabaseWriteError {
+                throw error
+            } catch {
+                lastError = error
+            }
+            if attempt < maxAttempts {
+                // Backoff: 0.8s, 1.6s.
+                try? await Task.sleep(nanoseconds: UInt64(attempt) * 800_000_000)
+            }
         }
+        print("upsertProfile: giving up after \(maxAttempts) attempts — \(lastError)")
+        throw lastError
     }
     
     /// Uploads an array of client profiles in a single batch (used for initial migration).
@@ -899,8 +936,8 @@ class SupabaseDBService {
 
     /// Records a receipt row (post-payment tax-invoice snapshot) linked to a `Sales`
     /// row via `saleID`. Amounts are in rupees; `time` is the transaction time-of-day
-    /// (HH:mm:ss), matching `SalesItem.time`. Best-effort — logs and returns on
-    /// failure since the on-screen receipt was already shown to the customer.
+    /// (HH:mm:ss), matching `SalesItem.time`. Transient failures are retried so a
+    /// brief connection drop after payment does not lose the receipt record.
     func recordReceipt(
         saleID: String?,
         invoiceNumber: String?,
@@ -913,16 +950,11 @@ class SupabaseDBService {
         amountPaid: Double,
         itemCount: Int,
         receiptDate: String,
-        time: String
+        time: String,
+        trackingID: String? = nil,
+        deliveryAddress: String? = nil
     ) async {
         guard let url = URL(string: "\(baseURL)/receipt") else { return }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue(anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
 
         // The receipt belongs to the same boutique the Sales row is written against.
         var body: [String: Any] = [
@@ -941,19 +973,45 @@ class SupabaseDBService {
         if let saleID { body["saleID"] = saleID }
         if let invoiceNumber { body["invoiceNumber"] = invoiceNumber }
         if let paymentReference { body["paymentReference"] = paymentReference }
+        if let trackingID, !trackingID.isEmpty { body["tracking_id"] = trackingID }
+        if let deliveryAddress, !deliveryAddress.isEmpty { body["delivery_address"] = deliveryAddress }
 
-        do {
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
-            let (data, response) = try await URLSession.shared.data(for: request)
-            if let http = response as? HTTPURLResponse {
-                print("Receipt insert: HTTP \(http.statusCode)")
-                if !(200...299).contains(http.statusCode) {
-                    print("Receipt body: \(String(data: data, encoding: .utf8) ?? "")")
-                }
-            }
-        } catch {
-            print("Failed to record receipt: \(error)")
+        guard let requestBody = try? JSONSerialization.data(withJSONObject: body) else {
+            print("Failed to encode receipt")
+            return
         }
+
+        for attempt in 1...3 {
+            do {
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue(anonKey, forHTTPHeaderField: "apikey")
+                request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
+                request.timeoutInterval = 30
+                request.httpBody = requestBody
+
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+                print("Receipt insert: HTTP \(http.statusCode)")
+                if (200...299).contains(http.statusCode) { return }
+
+                let responseBody = String(data: data, encoding: .utf8) ?? ""
+                if (400...499).contains(http.statusCode) {
+                    print("Receipt rejected: \(responseBody)")
+                    return
+                }
+                print("Receipt transient failure: \(responseBody)")
+            } catch {
+                print("Receipt attempt \(attempt) failed: \(error)")
+            }
+
+            if attempt < 3 {
+                try? await Task.sleep(nanoseconds: UInt64(attempt) * 800_000_000)
+            }
+        }
+        print("Failed to record receipt after 3 attempts")
     }
 
     // MARK: - Planogram (store capture reports)
@@ -1474,8 +1532,10 @@ struct DBReceipt: Codable, Identifiable {
     let itemCount: Int?
     let receiptDate: String?
     let time: String?
+    let trackingID: String?
+    let deliveryAddress: String?
     let createdAt: String?
-    
+
     enum CodingKeys: String, CodingKey {
         case receiptID = "receipt_id"
         case saleID = "saleID"
@@ -1492,6 +1552,8 @@ struct DBReceipt: Codable, Identifiable {
         case itemCount = "itemCount"
         case receiptDate = "receiptDate"
         case time = "time"
+        case trackingID = "tracking_id"
+        case deliveryAddress = "delivery_address"
         case createdAt = "createdAt"
     }
 }
@@ -1537,6 +1599,4 @@ struct DBAfterSaleRequest: Codable, Identifiable {
     let storeID: String
     let createdAt: String
 }
-
-
 

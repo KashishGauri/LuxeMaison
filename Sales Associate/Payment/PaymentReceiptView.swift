@@ -80,6 +80,14 @@ struct ReceiptView: View {
             metaRow("Invoice date", serverDateString)
             metaRow("Place of supply", "\(order.placeOfSupply.stateName) (\(order.placeOfSupply.stateCode))")
             metaRow("Fulfillment", order.fulfillment.label)
+            if order.fulfillment.kind == .delivery {
+                if let address = order.fulfillment.address, !address.isEmpty {
+                    metaRow("Deliver to", address)
+                }
+                if let trackingID = order.trackingID, !trackingID.isEmpty {
+                    metaRow("Tracking no.", trackingID)
+                }
+            }
         }
         .padding(12)
         .background(.white.opacity(0.5), in: RoundedRectangle(cornerRadius: 14, style: .continuous))

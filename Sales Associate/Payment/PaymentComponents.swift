@@ -202,6 +202,7 @@ struct PaymentMethodCard: View {
             .padding(14)
             .background(.white.opacity(0.58), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Theme.line.opacity(0.45), lineWidth: 1))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(isDisabled)

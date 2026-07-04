@@ -95,7 +95,6 @@ struct ClientelingContent: View {
     private func updateClientProfile(_ updatedClient: ClientProfile) {
         clientProfiles.removeAll { $0.id == updatedClient.id }
         clientProfiles.insert(updatedClient, at: 0)
-        ClientProfileJSONStore.saveProfiles(clientProfiles)
         rememberRecentlyViewed(updatedClient)
         selectedClient = updatedClient
         
@@ -835,6 +834,11 @@ private struct ClientPurchaseHistorySection: View {
     let clientPhone: String
 
     @State private var receiptOrder: PurchaseOrderGroup?
+    @State private var showsAllOrders = false
+
+    /// The profile shows only the two most recent orders; the rest live behind
+    /// the "View all" sheet.
+    private var visibleOrders: [PurchaseOrderGroup] { Array(orders.prefix(2)) }
 
     /// Groups flat purchases into orders, preserving history order (newest first).
     private var orders: [PurchaseOrderGroup] {
@@ -864,15 +868,32 @@ private struct ClientPurchaseHistorySection: View {
                     Text("Purchase History")
                         .font(.title3.weight(.black))
                     Spacer()
-                    Text("\(purchases.count) items")
-                        .font(.caption.weight(.black))
-                        .foregroundStyle(Theme.gold)
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 7)
-                        .background(Theme.selected, in: Capsule())
+                    if orders.count > 2 {
+                        Button {
+                            showsAllOrders = true
+                        } label: {
+                            HStack(spacing: 5) {
+                                Text("View all")
+                                Image(systemName: "chevron.right")
+                            }
+                            .font(.caption.weight(.black))
+                            .foregroundStyle(Theme.gold)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(Theme.selected, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        Text("\(purchases.count) items")
+                            .font(.caption.weight(.black))
+                            .foregroundStyle(Theme.gold)
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 7)
+                            .background(Theme.selected, in: Capsule())
+                    }
                 }
 
-                ForEach(orders) { order in
+                ForEach(visibleOrders) { order in
                     PurchaseOrderCard(order: order) {
                         receiptOrder = order
                     }
@@ -893,6 +914,80 @@ private struct ClientPurchaseHistorySection: View {
                     onClose: { receiptOrder = nil }
                 )
             }
+            .sheet(isPresented: $showsAllOrders) {
+                AllPurchaseOrdersSheet(
+                    orders: orders,
+                    products: products,
+                    clientName: clientName,
+                    clientPhone: clientPhone,
+                    onClose: { showsAllOrders = false }
+                )
+            }
+        }
+    }
+}
+
+/// Full-height sheet listing every past order, opened from "View all". Holds its
+/// own receipt-sheet state so it can present a receipt without colliding with the
+/// profile's own receipt sheet.
+private struct AllPurchaseOrdersSheet: View {
+    let orders: [PurchaseOrderGroup]
+    let products: [SalesProduct]
+    let clientName: String
+    let clientPhone: String
+    let onClose: () -> Void
+
+    @State private var receiptOrder: PurchaseOrderGroup?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Purchase History")
+                        .font(.title2.weight(.black))
+                        .foregroundStyle(Theme.ink)
+                    Text("\(orders.count) orders")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.muted)
+                }
+
+                Spacer()
+
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.headline.weight(.black))
+                        .foregroundStyle(Theme.ink)
+                        .frame(width: 40, height: 40)
+                        .background(.white.opacity(0.72), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close")
+            }
+            .padding(20)
+
+            ScrollView {
+                VStack(spacing: 12) {
+                    ForEach(orders) { order in
+                        PurchaseOrderCard(order: order) {
+                            receiptOrder = order
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 24)
+            }
+            .scrollIndicators(.hidden)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Theme.background)
+        .sheet(item: $receiptOrder) { order in
+            PurchaseReceiptSheet(
+                order: order,
+                products: products,
+                clientName: clientName,
+                clientPhone: clientPhone,
+                onClose: { receiptOrder = nil }
+            )
         }
     }
 }
@@ -1028,16 +1123,25 @@ private struct PurchaseReceiptSheet: View {
                 grossInclusivePaise: grossPaise
             )
         }
+        // Rebuild the fulfilment (and tracking id) from what was stored at checkout;
+        // legacy orders with no stored fulfilment fall back to pickup.
+        let firstItem = order.items.first
+        let isDelivery = firstItem?.fulfillmentKind == "delivery"
+        let fulfillment = PaymentFulfillmentSummary(
+            kind: isDelivery ? .delivery : .pickup,
+            address: isDelivery ? firstItem?.deliveryAddress : nil
+        )
         return FrozenOrder(
             orderID: order.id,
             lineItems: lineItems,
             placeOfSupply: .supplierState,
             treatment: .intraState,
             buyerType: .b2c,
-            fulfillment: PaymentFulfillmentSummary(kind: .pickup, address: nil),
+            fulfillment: fulfillment,
             clientName: clientName,
             clientPhone: clientPhone,
-            invoiceNumber: order.invoiceNumber ?? "LM/26-27/\(order.id.suffix(5))"
+            invoiceNumber: order.invoiceNumber ?? "LM/26-27/\(order.id.suffix(5))",
+            trackingID: isDelivery ? firstItem?.trackingID : nil
         )
     }
 }
