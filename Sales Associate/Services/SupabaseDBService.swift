@@ -414,6 +414,7 @@ class SupabaseDBService {
     }
 
     /// Uploads an image to Supabase Storage bucket and returns the file path.
+    /// Uploads an image to Supabase Storage bucket and returns the file path.
     func uploadImage(_ image: UIImage, toBucket bucket: String, fileName: String) async throws -> String {
         guard let url = URL(string: "https://zfengirsvsjikrhxrfit.supabase.co/storage/v1/object/\(bucket)/\(fileName)") else {
             throw URLError(.badURL)
@@ -423,10 +424,12 @@ class SupabaseDBService {
             throw NSError(domain: "ImageConversionError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to convert image to JPEG data"])
         }
         
+        let token = UserDefaults.standard.string(forKey: "active_session_access_token") ?? anonKey
+        
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue(anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
         request.httpBody = imageData
         
@@ -438,7 +441,7 @@ class SupabaseDBService {
         if !(200...299).contains(httpResponse.statusCode) {
             let bodyString = String(data: data, encoding: .utf8) ?? ""
             print("Upload Image Error response (\(httpResponse.statusCode)): \(bodyString)")
-            throw URLError(.badServerResponse)
+            throw NSError(domain: "SupabaseStorageError", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Upload failed (\(httpResponse.statusCode)): \(bodyString)"])
         }
         
         return "\(bucket)/\(fileName)"
