@@ -81,16 +81,16 @@ enum ClientTier {
 
     static func displayName(for rewardPoints: Int) -> String {
         switch rewardPoints {
-        case 50_000...:
+//        case 50_000...:
+//            return "Platinum Tier"
+//        case 20_000...49_999:
+//            return "Diamond Tier"
+        case 5_000...:
             return "Platinum Tier"
-        case 20_000...49_999:
-            return "Diamond Tier"
-        case 5_000...19_999:
-            return "Gold Tier"
         case 1_000...4_999:
-            return "Silver Tier"
+            return "Diamond Tier"
         default:
-            return "Normal"
+            return "Gold Tier"
         }
     }
 
@@ -99,19 +99,19 @@ enum ClientTier {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased() ?? ""
 
+//        if normalizedTier.contains("platinum") {
+//            return 50_000_000
+//        }
+//
+//        if normalizedTier.contains("diamond") {
+//            return 20_000_000
+//        }
+
         if normalizedTier.contains("platinum") {
-            return 50_000_000
-        }
-
-        if normalizedTier.contains("diamond") {
-            return 20_000_000
-        }
-
-        if normalizedTier.contains("gold") {
             return 5_000_000
         }
 
-        if normalizedTier.contains("silver") {
+        if normalizedTier.contains("diamond") {
             return 1_000_000
         }
 
