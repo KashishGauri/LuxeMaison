@@ -129,6 +129,9 @@ struct ClientProfile: Identifiable, Equatable, Codable {
     let preferredLanguage: String
     let preferredContactMethod: String
     let marketingConsent: Bool
+    // Explicit consent flags (source of truth for what the associate may see).
+    let preferenceVisibilityConsent: Bool
+    let purchaseHistoryVisibilityConsent: Bool
     let followUpDate: String
     let tier: String
     let rewardPoints: Int
@@ -153,6 +156,8 @@ struct ClientProfile: Identifiable, Equatable, Codable {
         preferredLanguage: String = "English",
         preferredContactMethod: String = "Phone",
         marketingConsent: Bool = false,
+        preferenceVisibilityConsent: Bool? = nil,
+        purchaseHistoryVisibilityConsent: Bool? = nil,
         followUpDate: String = "",
         tier: String? = nil,
         rewardPoints: Int? = nil,
@@ -176,6 +181,12 @@ struct ClientProfile: Identifiable, Equatable, Codable {
         self.preferredLanguage = preferredLanguage
         self.preferredContactMethod = preferredContactMethod
         self.marketingConsent = marketingConsent
+        // When not passed explicitly, fall back to the legacy status/task derivation
+        // so profiles built before the explicit flags keep their consent state.
+        self.preferenceVisibilityConsent = preferenceVisibilityConsent
+            ?? Self.legacyAllowsPreferenceVisibility(status: status, tasks: tasks)
+        self.purchaseHistoryVisibilityConsent = purchaseHistoryVisibilityConsent
+            ?? Self.legacyAllowsPurchaseHistoryVisibility(status: status, tasks: tasks)
         self.followUpDate = followUpDate
         // Lifetime spend is the larger of the stored amount and the sum of recorded
         // purchases, so it always reflects the client's actual purchase history.
@@ -213,6 +224,8 @@ struct ClientProfile: Identifiable, Equatable, Codable {
         case preferredLanguage
         case preferredContactMethod
         case marketingConsent
+        case preferenceVisibilityConsent
+        case purchaseHistoryVisibilityConsent
         case followUpDate
         case tier
         case rewardPoints
@@ -271,6 +284,11 @@ struct ClientProfile: Identifiable, Equatable, Codable {
         wishlistProductIDs = try container.decodeIfPresent([String].self, forKey: .wishlistProductIDs) ?? []
         defaultDeliveryAddress = try container.decodeIfPresent(String.self, forKey: .defaultDeliveryAddress)
         deliveryAddressDetail = try container.decodeIfPresent(String.self, forKey: .deliveryAddressDetail)
+        // Explicit flags when present; otherwise migrate from the legacy status/tasks.
+        preferenceVisibilityConsent = try container.decodeIfPresent(Bool.self, forKey: .preferenceVisibilityConsent)
+            ?? Self.legacyAllowsPreferenceVisibility(status: status, tasks: tasks)
+        purchaseHistoryVisibilityConsent = try container.decodeIfPresent(Bool.self, forKey: .purchaseHistoryVisibilityConsent)
+            ?? Self.legacyAllowsPurchaseHistoryVisibility(status: status, tasks: tasks)
     }
 
     static func reconstructTasks(
@@ -325,6 +343,8 @@ struct ClientProfile: Identifiable, Equatable, Codable {
             preferredLanguage: preferredLanguage,
             preferredContactMethod: preferredContactMethod,
             marketingConsent: marketingConsent,
+            preferenceVisibilityConsent: preferenceVisibilityConsent,
+            purchaseHistoryVisibilityConsent: purchaseHistoryVisibilityConsent,
             followUpDate: followUpDate,
             lifetimePurchaseAmount: lifetimePurchaseAmount,
             boutique: boutique,
@@ -353,6 +373,8 @@ struct ClientProfile: Identifiable, Equatable, Codable {
             preferredLanguage: preferredLanguage,
             preferredContactMethod: preferredContactMethod,
             marketingConsent: marketingConsent,
+            preferenceVisibilityConsent: preferenceVisibilityConsent,
+            purchaseHistoryVisibilityConsent: purchaseHistoryVisibilityConsent,
             followUpDate: followUpDate,
             lifetimePurchaseAmount: lifetimePurchaseAmount,
             boutique: boutique,
@@ -380,7 +402,14 @@ struct ClientProfile: Identifiable, Equatable, Codable {
             || email.lowercased().contains(normalizedQuery)
     }
 
-    var allowsPreferenceVisibility: Bool {
+    var allowsPreferenceVisibility: Bool { preferenceVisibilityConsent }
+
+    var allowsPurchaseHistoryVisibility: Bool { purchaseHistoryVisibilityConsent }
+
+    /// Legacy string derivation, used only to migrate profiles saved before the
+    /// explicit consent flags existed (init / decoder fall back to these when the
+    /// stored booleans are absent).
+    static func legacyAllowsPreferenceVisibility(status: String, tasks: [ClientTask]) -> Bool {
         let taskText = tasks
             .map { "\($0.title) \($0.subtitle)" }
             .joined(separator: " ")
@@ -393,7 +422,7 @@ struct ClientProfile: Identifiable, Equatable, Codable {
             || profileText.contains("profile and purchase history allowed")
     }
 
-    var allowsPurchaseHistoryVisibility: Bool {
+    static func legacyAllowsPurchaseHistoryVisibility(status: String, tasks: [ClientTask]) -> Bool {
         let taskText = tasks
             .map { "\($0.title) \($0.subtitle)" }
             .joined(separator: " ")
@@ -459,6 +488,8 @@ struct ClientProfile: Identifiable, Equatable, Codable {
             preferredLanguage: preferredLanguage,
             preferredContactMethod: preferredContactMethod,
             marketingConsent: marketingConsent,
+            preferenceVisibilityConsent: preferenceVisibilityConsent,
+            purchaseHistoryVisibilityConsent: purchaseHistoryVisibilityConsent,
             followUpDate: followUpDate,
             tier: tier,
             lifetimePurchaseAmount: fallbackLifetimePurchaseAmount ?? lifetimePurchaseAmount,
