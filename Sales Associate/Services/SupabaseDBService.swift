@@ -414,9 +414,10 @@ class SupabaseDBService {
     }
 
     /// Uploads an image to Supabase Storage bucket and returns the file path.
-    /// Uploads an image to Supabase Storage bucket and returns the file path.
     func uploadImage(_ image: UIImage, toBucket bucket: String, fileName: String) async throws -> String {
-        guard let url = URL(string: "https://zfengirsvsjikrhxrfit.supabase.co/storage/v1/object/\(bucket)/\(fileName)") else {
+        guard let encodedBucket = bucket.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let encodedFile = fileName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let url = URL(string: "https://zfengirsvsjikrhxrfit.supabase.co/storage/v1/object/\(encodedBucket)/\(encodedFile)") else {
             throw URLError(.badURL)
         }
         

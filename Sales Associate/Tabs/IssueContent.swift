@@ -532,8 +532,10 @@ struct IssueContent: View {
                         
                         HStack(alignment: .top, spacing: 14) {
                             // Thumbnail or icon
-                            if let imgUrl = req.imageUrl, !imgUrl.isEmpty {
-                                AsyncImage(url: URL(string: "https://zfengirsvsjikrhxrfit.supabase.co/storage/v1/object/public/\(imgUrl)")) { image in
+                            if let imgUrl = req.imageUrl, !imgUrl.isEmpty,
+                               let encodedUrl = "https://zfengirsvsjikrhxrfit.supabase.co/storage/v1/object/public/\(imgUrl)".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+                               let url = URL(string: encodedUrl) {
+                                AsyncImage(url: url) { image in
                                     image
                                         .resizable()
                                         .scaledToFill()
@@ -717,7 +719,7 @@ struct IssueContent: View {
                     let uniqueName = "img_after_sale_\(Int(Date().timeIntervalSince1970))_\(UUID().uuidString.prefix(6)).jpg"
                     photoPath = try await SupabaseDBService.shared.uploadImage(
                         photo,
-                        toBucket: "damagedproduct",
+                        toBucket: "Damaged Product",
                         fileName: uniqueName
                     )
                 }

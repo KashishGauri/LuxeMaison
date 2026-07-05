@@ -417,7 +417,7 @@ private struct StockReceivingIssuePane: View {
                         let uniqueName = "img_\(Int(Date().timeIntervalSince1970))_\(UUID().uuidString.prefix(6)).jpg"
                         let photoPath = try await SupabaseDBService.shared.uploadImage(
                             photo,
-                            toBucket: "damagedproduct",
+                            toBucket: "Damaged Product",
                             fileName: uniqueName
                         )
                         imageUrl = photoPath
