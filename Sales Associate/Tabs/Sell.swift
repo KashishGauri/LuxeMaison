@@ -2231,7 +2231,7 @@ private struct CreateClientProfilePanel: View {
                                     }
                                 }
                                 
-                                ProfileTextField(title: "Birthday", placeholder: "DD MMM or birth date", text: $birthday)
+                                BirthdayPickerField(birthday: $birthday)
                                 ProfileDropdown(title: "Preferred Language", options: languages, selection: $preferredLanguage)
                             }
                         }
@@ -2495,6 +2495,83 @@ struct ProfileTextField: View {
                 .frame(minHeight: 50)
                 .background(.white.opacity(0.66), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
+    }
+}
+
+/// Birthday field backed by a calendar. Enforces a minimum age of 10 — dates
+/// newer than 10 years ago are outside the selectable range. Writes the chosen
+/// date back as a formatted string on the profile.
+struct BirthdayPickerField: View {
+    @Binding var birthday: String
+
+    @State private var date = Calendar.current.date(byAdding: .year, value: -25, to: Date()) ?? Date()
+    @State private var isSelected = false
+    @State private var isPresented = false
+
+    // Minimum age 10: cannot pick a date newer than 10 years ago.
+    private var maxDate: Date { Calendar.current.date(byAdding: .year, value: -10, to: Date()) ?? Date() }
+    private var minDate: Date { Calendar.current.date(byAdding: .year, value: -100, to: Date()) ?? Date() }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("BIRTHDAY")
+                .font(.caption.weight(.black))
+                .foregroundStyle(Theme.muted)
+
+            Button {
+                isPresented = true
+            } label: {
+                HStack {
+                    Text(isSelected ? Self.display(date) : "DD MMM or birth date")
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(isSelected ? Theme.ink : Theme.muted.opacity(0.66))
+                    Spacer()
+                    Image(systemName: "calendar")
+                        .font(.subheadline.weight(.black))
+                        .foregroundStyle(Theme.gold)
+                }
+                .padding(.horizontal, 14)
+                .frame(maxWidth: .infinity, minHeight: 58)
+                .background(.white.opacity(0.66), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: $isPresented) {
+                VStack(spacing: 16) {
+                    DatePicker(
+                        "Birthday",
+                        selection: $date,
+                        in: minDate...maxDate,
+                        displayedComponents: .date
+                    )
+                    .datePickerStyle(.graphical)
+                    .labelsHidden()
+                    .frame(maxWidth: 320)
+
+                    Button {
+                        isSelected = true
+                        birthday = Self.display(date)
+                        isPresented = false
+                    } label: {
+                        Label("Set Birthday", systemImage: "checkmark")
+                            .font(.headline.weight(.black))
+                            .frame(maxWidth: .infinity, minHeight: 50)
+                            .foregroundStyle(.white)
+                            .background(Theme.goldGradient, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(20)
+                .frame(minWidth: 340)
+                .presentationCompactAdaptation(.popover)
+            }
+        }
+    }
+
+    private static func display(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "dd MMM yyyy"
+        return formatter.string(from: date)
     }
 }
 
