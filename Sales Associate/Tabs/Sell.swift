@@ -2101,7 +2101,6 @@ private struct CreateClientProfilePanel: View {
     @State private var preferredContactMethod = "Phone"
     @State private var marketingConsent = false
     @State private var notes = ""
-    @State private var followUpDate = ""
     @State private var consentAccepted = false
 
     private let languages = ["English", "Hindi", "Marathi", "Gujarati"]
@@ -2301,8 +2300,6 @@ private struct CreateClientProfilePanel: View {
                                             }
                                         }
                                 }
-
-                                ProfileTextField(title: "Follow-up Date", placeholder: "Tomorrow, 4 PM or date", text: $followUpDate)
                             }
                         }
 
@@ -2357,7 +2354,6 @@ private struct CreateClientProfilePanel: View {
             marketingConsent: marketingConsent,
             preferenceVisibilityConsent: consentAccepted,
             purchaseHistoryVisibilityConsent: consentAccepted,
-            followUpDate: followUpDate.trimmingCharacters(in: .whitespacesAndNewlines),
             tier: "Normal",
             lifetimePurchaseAmount: 0,
             boutique: "Mumbai",
@@ -2380,7 +2376,7 @@ private struct CreateClientProfilePanel: View {
                     title: marketingConsent ? "Marketing consent on" : "Marketing consent off",
                     subtitle: marketingConsent ? "Client can receive campaigns by \(preferredContactMethod)" : "Do not send marketing campaigns"
                 )
-            ] + followUpTasks()
+            ]
         )
     }
 
@@ -2395,19 +2391,6 @@ private struct CreateClientProfilePanel: View {
         appendAttribute("Preferred Category", value: preferredCategory, to: &attributes)
         appendAttribute("Brand Preference", value: brandPreference, to: &attributes)
         return attributes
-    }
-
-    private func followUpTasks() -> [ClientTask] {
-        let followUp = followUpDate.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !followUp.isEmpty else { return [] }
-
-        return [
-            ClientTask(
-                icon: "calendar.badge.clock",
-                title: "Follow-up",
-                subtitle: followUp
-            )
-        ]
     }
 
     private func appendAttribute(
