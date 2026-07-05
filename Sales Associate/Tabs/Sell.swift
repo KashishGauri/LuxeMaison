@@ -69,6 +69,74 @@ struct SellContent: View {
         return categoryMatches.isEmpty ? applyActiveFilters(to: products) : categoryMatches
     }
 
+    /// Simple recommendation engine: products curated for the active client from
+    /// their captured brand + budget preference. Brand match ranks above budget.
+    /// Empty when there is no client, preference-visibility consent is OFF, or no
+    /// brand/budget is captured — in which case the browser shows normal Popular.
+    private var clientRecommendations: [SalesProduct] {
+        guard let client = session.createdClient, client.allowsPreferenceVisibility else { return [] }
+
+        let preferredBrand = clientPreferredBrand(client)
+        let budgetLakhs = clientBudgetLakhs(client)
+        guard preferredBrand != nil || budgetLakhs != nil else { return [] }
+
+        let scored: [(product: SalesProduct, score: Int)] = products
+            .filter { $0.isInStock }
+            .compactMap { product in
+                var score = 0
+                if let preferredBrand, brandMatches(product.brand, preferredBrand) { score += 2 }
+                if let budgetLakhs, product.priceValue >= budgetLakhs - 0.0001 { score += 1 }
+                return score > 0 ? (product, score) : nil
+            }
+
+        return scored
+            .sorted { $0.score != $1.score ? $0.score > $1.score : $0.product.priceValue < $1.product.priceValue }
+            .map(\.product)
+    }
+
+    /// Suggestions row content: curated recommendations when available, else Popular.
+    private var resolvedSuggestions: [SalesProduct] {
+        clientRecommendations.isEmpty ? suggestedProducts : clientRecommendations
+    }
+
+    private var suggestionsTitle: String {
+        clientRecommendations.isEmpty ? "Popular" : "Recommended"
+    }
+
+    private func clientPreferredBrand(_ client: ClientProfile) -> String? {
+        let wanted = ["brand preference", "brand"]
+        for attribute in client.attributes where wanted.contains(attribute.title.lowercased()) {
+            let value = attribute.value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !value.isEmpty && value.lowercased() != "n/a" { return value }
+        }
+        return nil
+    }
+
+    private func clientBudgetLakhs(_ client: ClientProfile) -> Double? {
+        for attribute in client.attributes where attribute.title.lowercased() == "budget" {
+            return Self.parseBudgetLakhs(attribute.value)
+        }
+        return nil
+    }
+
+    private func brandMatches(_ productBrand: String, _ preferred: String) -> Bool {
+        let a = productBrand.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let b = preferred.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !a.isEmpty, !b.isEmpty else { return false }
+        return a == b || a.contains(b) || b.contains(a)
+    }
+
+    /// Parses a captured budget preference (e.g. "Rs. 2L+", "Rs. 50K+") into lakhs,
+    /// matching `SalesProduct.priceValue`'s unit.
+    private static func parseBudgetLakhs(_ text: String) -> Double? {
+        let lower = text.lowercased()
+        guard let match = lower.range(of: #"[0-9]+(\.[0-9]+)?"#, options: .regularExpression),
+              let value = Double(lower[match]) else { return nil }
+        if lower.contains("cr") { return value * 100 }
+        if lower.contains("k") { return value / 100 }
+        return value   // "L" / lakhs assumed
+    }
+
     private var wishlistProducts: [SalesProduct] {
         products.filter { session.wishlistProductIDs.contains($0.id) }
     }
@@ -248,6 +316,7 @@ struct SellContent: View {
                 } else if session.activePanel == .createProfile {
                     CreateClientProfilePanel(
                         guestID: session.guestID ?? "Guest",
+                        products: products,
                         onBack: {
                             session.activePanel = returnPanelAfterProfile
                         },
@@ -262,7 +331,8 @@ struct SellContent: View {
                         SellProductBrowser(
                             title: browserTitle,
                             products: filteredProducts,
-                            suggestedProducts: suggestedProducts,
+                            suggestedProducts: resolvedSuggestions,
+                            suggestionsTitle: suggestionsTitle,
                             selectedProduct: selectedProduct,
                             allowsWishlist: session.hasActiveClient,
                             isExpanded: isCategoryExpanded,
@@ -306,7 +376,8 @@ struct SellContent: View {
                     SellProductBrowser(
                         title: browserTitle,
                         products: filteredProducts,
-                        suggestedProducts: suggestedProducts,
+                        suggestedProducts: resolvedSuggestions,
+                        suggestionsTitle: suggestionsTitle,
                         selectedProduct: nil,
                         allowsWishlist: session.hasActiveClient,
                         isExpanded: isCategoryExpanded,
@@ -798,6 +869,7 @@ private struct SellProductBrowser: View {
     let title: String
     let products: [SalesProduct]
     let suggestedProducts: [SalesProduct]
+    let suggestionsTitle: String
     let selectedProduct: SalesProduct?
     let allowsWishlist: Bool
     let isExpanded: Bool
@@ -816,6 +888,7 @@ private struct SellProductBrowser: View {
         VStack(alignment: .leading, spacing: 18) {
             SuggestedProductsRow(
                 products: suggestedProducts,
+                title: suggestionsTitle,
                 allowsWishlist: allowsWishlist,
                 isExpanded: isTopSuggestionsExpanded,
                 isWishlisted: isWishlisted,
@@ -906,6 +979,7 @@ private struct SellProductBrowser: View {
 
 private struct SuggestedProductsRow: View {
     let products: [SalesProduct]
+    let title: String
     let allowsWishlist: Bool
     let isExpanded: Bool
     let isWishlisted: (SalesProduct) -> Bool
@@ -925,7 +999,7 @@ private struct SuggestedProductsRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("Popular")
+                Text(title)
                     .font(.title2.weight(.black))
                 Spacer()
 
@@ -2007,6 +2081,7 @@ private struct CartQuantityStepper: View {
 
 private struct CreateClientProfilePanel: View {
     let guestID: String
+    let products: [SalesProduct]
     let onBack: () -> Void
     let onSave: (ClientProfile) -> Void
 
@@ -2032,13 +2107,38 @@ private struct CreateClientProfilePanel: View {
     private let languages = ["English", "Hindi", "Marathi", "Gujarati"]
     private let occasions = ["N/A", "Wedding", "Anniversary", "Birthday", "Festive", "Corporate Gift", "Evening Event", "Travel"]
     private let styles = ["N/A", "Minimal", "Statement", "Classic", "Bridal", "Evening", "Formal", "Daily Luxury"]
-    private let budgets = ["N/A", "Rs. 50K+", "Rs. 1L+", "Rs. 2L+", "Rs. 5L+", "Rs. 10L+"]
     private let sizes = ["N/A", "EU 36", "EU 38", "EU 40", "One size", "Watch 36mm", "Watch 40mm"]
     private let materials = ["N/A", "Gold", "Rose Gold", "Silver", "Diamond", "Pearl", "Leather", "Satin"]
     private let colors = ["N/A", "Champagne", "Black", "Ivory", "Gold", "Rose Gold", "Emerald", "Pearl", "Blue", "Brown"]
-    private let categories = ["N/A", "Handbags", "Clutches", "Watches", "Jewellery", "Necklaces", "Footwear", "Accessories"]
-    private let brands = ["N/A", "Bvlgari", "Cartier", "Dior", "Gucci", "Hermes", "Jimmy Choo", "Louis Vuitton", "Rolex", "Titan"]
+    private let categories = ["N/A", "Handbags", "Fragrances", "Accessories", "Jewellery", "Watches", "Footware"]
     private let contactMethods = ["Phone", "WhatsApp", "Email", "SMS"]
+
+    /// Brand options are the actual brands present in the Supabase catalogue, so a
+    /// captured Brand Preference can match real products in the recommendation engine.
+    private var brands: [String] {
+        let distinct = Set(products.map { $0.brand.trimmingCharacters(in: .whitespacesAndNewlines) })
+            .filter { !$0.isEmpty }
+        return ["N/A"] + distinct.sorted()
+    }
+
+    /// Budget tiers derived from the catalogue's actual maximum price, so the
+    /// options stay realistic for what's in Supabase.
+    private var budgets: [String] {
+        let maxLakhs = products.map(\.priceValue).filter { $0 > 0 }.max() ?? 10
+        let ladderLakhs: [Double] = [0.5, 1, 2, 5, 10, 25, 50, 100, 200, 300]
+        let tiers = ladderLakhs.filter { $0 <= maxLakhs + 0.0001 }.map(Self.formatBudgetTier)
+        return ["N/A"] + (tiers.isEmpty ? ["Rs. 1L+"] : tiers)
+    }
+
+    private static func formatBudgetTier(_ lakhs: Double) -> String {
+        if lakhs >= 100 { return "Rs. \(trimmedNumber(lakhs / 100))Cr+" }
+        if lakhs >= 1 { return "Rs. \(trimmedNumber(lakhs))L+" }
+        return "Rs. \(Int((lakhs * 100).rounded()))K+"
+    }
+
+    private static func trimmedNumber(_ value: Double) -> String {
+        value == value.rounded() ? String(Int(value)) : String(format: "%.1f", value)
+    }
 
     private var isNameValid: Bool {
         let trimmed = fullName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2420,13 +2520,13 @@ struct ProfileDropdown: View {
     let options: [String]
     @Binding var selection: String
 
+    // A `Menu` here silently fails to open when nested in a LazyVGrid/ScrollView
+    // (SwiftUI hit-testing quirk). A Button + confirmationDialog is reliable.
+    @State private var isPickerPresented = false
+
     var body: some View {
-        Menu {
-            ForEach(options, id: \.self) { option in
-                Button(option) {
-                    selection = option
-                }
-            }
+        Button {
+            isPickerPresented = true
         } label: {
             HStack {
                 VStack(alignment: .leading, spacing: 5) {
@@ -2445,10 +2545,17 @@ struct ProfileDropdown: View {
                     .foregroundStyle(Theme.gold)
             }
             .padding(.horizontal, 14)
-            .frame(minHeight: 58)
+            .frame(maxWidth: .infinity, minHeight: 58)
             .background(.white.opacity(0.66), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
+        .confirmationDialog(title, isPresented: $isPickerPresented, titleVisibility: .visible) {
+            ForEach(options, id: \.self) { option in
+                Button(option) { selection = option }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
     }
 }
 
