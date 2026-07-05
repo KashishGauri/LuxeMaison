@@ -344,21 +344,32 @@ private struct ClientDetailCard: View {
     private func updateConsent(
         preferenceVisibilityAllowed: Bool,
         purchaseHistoryAllowed: Bool,
-        approvalNote _: String
+        marketingAllowed: Bool
     ) {
-        let updatedTasks = client.tasks.map { task in
-            guard task.title.lowercased().contains("consent") else {
-                return task
-            }
-
-            return ClientTask(
-                icon: "checkmark.shield",
-                title: "Client insight consent on",
-                subtitle: consentSubtitle(
-                    preferenceVisibilityAllowed: preferenceVisibilityAllowed,
-                    purchaseHistoryAllowed: purchaseHistoryAllowed
+        // Display is driven by the explicit flags below; keep the stored task list
+        // coherent so any other consumer (and re-decode) sees matching data.
+        let updatedTasks = client.tasks.map { task -> ClientTask in
+            let title = task.title.lowercased()
+            if title.contains("marketing") {
+                return ClientTask(
+                    icon: marketingAllowed ? "megaphone.fill" : "bell.slash",
+                    title: marketingAllowed ? "Marketing consent on" : "Marketing consent off",
+                    subtitle: marketingAllowed
+                        ? "Client can receive campaigns by \(client.preferredContactMethod)"
+                        : "Do not send marketing campaigns"
                 )
-            )
+            }
+            if title.contains("consent") {
+                return ClientTask(
+                    icon: (preferenceVisibilityAllowed || purchaseHistoryAllowed) ? "checkmark.shield" : "eye.slash",
+                    title: "Client insight consent on",
+                    subtitle: consentSubtitle(
+                        preferenceVisibilityAllowed: preferenceVisibilityAllowed,
+                        purchaseHistoryAllowed: purchaseHistoryAllowed
+                    )
+                )
+            }
+            return task
         }
 
         onUpdateClient(
@@ -371,7 +382,9 @@ private struct ClientDetailCard: View {
                 birthday: client.birthday,
                 preferredLanguage: client.preferredLanguage,
                 preferredContactMethod: client.preferredContactMethod,
-                marketingConsent: client.marketingConsent,
+                marketingConsent: marketingAllowed,
+                preferenceVisibilityConsent: preferenceVisibilityAllowed,
+                purchaseHistoryVisibilityConsent: purchaseHistoryAllowed,
                 followUpDate: client.followUpDate,
                 tier: client.tier,
                 lifetimePurchaseAmount: client.lifetimePurchaseAmount,
@@ -464,6 +477,8 @@ private struct ClientDetailCard: View {
                 preferredLanguage: client.preferredLanguage,
                 preferredContactMethod: client.preferredContactMethod,
                 marketingConsent: client.marketingConsent,
+                preferenceVisibilityConsent: client.preferenceVisibilityConsent,
+                purchaseHistoryVisibilityConsent: client.purchaseHistoryVisibilityConsent,
                 followUpDate: client.followUpDate,
                 tier: client.tier,
                 lifetimePurchaseAmount: client.lifetimePurchaseAmount,
@@ -516,6 +531,30 @@ private struct ClientDetailCard: View {
         }
 
         return note
+    }
+
+    /// Single merged consent row shown in "Consent & Tasks" — summarises all three
+    /// consents. Marketing, when on, simply shows the contact method.
+    private var consentSummaryTask: ClientTask {
+        var parts: [String] = []
+        if client.allowsPreferenceVisibility { parts.append("Preferences") }
+        if client.allowsPurchaseHistoryVisibility { parts.append("Purchase history") }
+        if client.marketingConsent { parts.append("Marketing · \(client.preferredContactMethod)") }
+        let anyOn = !parts.isEmpty
+        return ClientTask(
+            icon: anyOn ? "checkmark.shield" : "eye.slash",
+            title: "Client consent",
+            subtitle: anyOn ? parts.joined(separator: " • ") : "Only identity is visible to sales associate"
+        )
+    }
+
+    /// Tasks other than the consent / marketing rows (which the single merged
+    /// consent row replaces) — i.e. preferences and follow-up.
+    private var nonConsentTasks: [ClientTask] {
+        client.tasks.filter { task in
+            let title = task.title.lowercased()
+            return !title.contains("consent") && !title.contains("marketing")
+        }
     }
 
     private var overviewContent: some View {
@@ -611,7 +650,12 @@ private struct ClientDetailCard: View {
                         .background(Theme.selected, in: Capsule())
                 }
 
-                ForEach(client.tasks) { task in
+                // One merged consent row (preferences + purchase history + marketing).
+                ClientTaskRow(task: consentSummaryTask, isActionable: true) {
+                    activeTaskPanel = .consentApproval
+                }
+
+                ForEach(nonConsentTasks) { task in
                     ClientTaskRow(
                         task: task,
                         isActionable: taskPanel(for: task) != nil
@@ -1271,22 +1315,25 @@ struct ClientPanelBackButton: View {
 private struct ClientConsentApprovalPanel: View {
     let client: ClientProfile
     let onBack: () -> Void
-    let onSave: (Bool, Bool, String) -> Void
+    let onSave: (_ preferenceVisibility: Bool, _ purchaseHistory: Bool, _ marketing: Bool) -> Void
 
     @State private var preferenceVisibilityAllowed = false
     @State private var purchaseHistoryAllowed = false
+    @State private var marketingAllowed = false
     @State private var isSaved = false
 
     init(
         client: ClientProfile,
         onBack: @escaping () -> Void,
-        onSave: @escaping (Bool, Bool, String) -> Void
+        onSave: @escaping (Bool, Bool, Bool) -> Void
     ) {
         self.client = client
         self.onBack = onBack
         self.onSave = onSave
-        _preferenceVisibilityAllowed = State(initialValue: client.hasClientInsightConsent)
-        _purchaseHistoryAllowed = State(initialValue: client.hasClientInsightConsent)
+        // Seed each toggle from its own stored flag so they are independent.
+        _preferenceVisibilityAllowed = State(initialValue: client.allowsPreferenceVisibility)
+        _purchaseHistoryAllowed = State(initialValue: client.allowsPurchaseHistoryVisibility)
+        _marketingAllowed = State(initialValue: client.marketingConsent)
     }
 
     var body: some View {
@@ -1295,10 +1342,10 @@ private struct ClientConsentApprovalPanel: View {
                 ClientPanelBackButton(action: onBack)
 
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("Preference Consent")
+                    Text("Client Consent")
                         .font(.title2.weight(.black))
                         .foregroundStyle(Theme.ink)
-                    Text("Take approval before showing preferences and purchase history to Sales Associate.")
+                    Text("Capture the client's approval before showing preferences, purchase history, or sending marketing.")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Theme.muted)
                 }
@@ -1343,10 +1390,17 @@ private struct ClientConsentApprovalPanel: View {
                     icon: "bag.fill",
                     isOn: $purchaseHistoryAllowed
                 )
+
+                ConsentToggleRow(
+                    title: "Marketing consent",
+                    subtitle: "Client can receive campaigns via \(client.preferredContactMethod).",
+                    icon: "megaphone.fill",
+                    isOn: $marketingAllowed
+                )
             }
 
             Button {
-                onSave(preferenceVisibilityAllowed, purchaseHistoryAllowed, "")
+                onSave(preferenceVisibilityAllowed, purchaseHistoryAllowed, marketingAllowed)
                 isSaved = true
             } label: {
                 Label(isSaved ? "Consent Captured" : "Capture Consent", systemImage: isSaved ? "checkmark.seal.fill" : "checkmark.shield")
@@ -1356,9 +1410,12 @@ private struct ClientConsentApprovalPanel: View {
                     .background(Theme.goldGradient, in: Capsule())
             }
             .buttonStyle(.plain)
-            .disabled(!preferenceVisibilityAllowed && !purchaseHistoryAllowed)
-            .opacity((preferenceVisibilityAllowed || purchaseHistoryAllowed) ? 1 : 0.55)
+            // Capturing "all off" is a valid consent state (revocation), so always enabled.
         }
+        // Re-enable the button label if the associate flips a toggle after saving.
+        .onChange(of: preferenceVisibilityAllowed) { _, _ in isSaved = false }
+        .onChange(of: purchaseHistoryAllowed) { _, _ in isSaved = false }
+        .onChange(of: marketingAllowed) { _, _ in isSaved = false }
     }
 }
 
