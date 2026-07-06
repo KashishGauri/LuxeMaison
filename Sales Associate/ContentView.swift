@@ -816,7 +816,13 @@ enum SalesAssociateTab: String, CaseIterable, Identifiable {
     }
 
     // allCases is synthesized by CaseIterable and includes every tab
-    // (today, client, sell, stock, issue) so all appear in the sidebar and top nav.
+    // (today, client, sell, stock, issue). Navigation uses `visibleCases` instead.
+
+    /// Tabs shown in navigation. `.issue` (After Sale) is temporarily hidden — add
+    /// it back here (or remove the filter) to restore it.
+    static var visibleCases: [SalesAssociateTab] {
+        allCases.filter { $0 != .issue }
+    }
 }
 
 //Dashboard content view
@@ -827,7 +833,7 @@ private struct SidebarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             VStack(spacing: 12) {
-                ForEach(SalesAssociateTab.allCases) { tab in
+                ForEach(SalesAssociateTab.visibleCases) { tab in
                     SidebarItem(
                         tab: tab,
                         isSelected: selectedTab == tab
@@ -884,7 +890,7 @@ private struct TopNavigationBar: View {
                 .frame(width: 52)
 
                 HStack(spacing: 8) {
-                    ForEach(SalesAssociateTab.allCases) { tab in
+                    ForEach(SalesAssociateTab.visibleCases) { tab in
                         TopNavigationItem(
                             tab: tab,
                             isSelected: selectedTab == tab
