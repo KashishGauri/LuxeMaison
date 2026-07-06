@@ -772,8 +772,13 @@ class SupabaseDBService {
     /// Fetches on-hand stock rows from the `StoreInventory` table. Stock is
     /// sourced from here (`currentquantity`), keyed by `productid` (= Product.id),
     /// rather than the stale `Product.current_stock` column.
-    func fetchStoreInventory() async throws -> [DBStoreInventory] {
-        guard let url = URL(string: "\(baseURL)/StoreInventory?select=*") else {
+    ///
+    /// Filtered to a single `storeID` so on-hand counts aren't summed across every
+    /// store's inventory. Defaults to this app's boutique when not provided.
+    func fetchStoreInventory(storeID: String? = nil) async throws -> [DBStoreInventory] {
+        let targetStore = storeID ?? defaultStoreID
+        let encodedStore = targetStore.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? targetStore
+        guard let url = URL(string: "\(baseURL)/StoreInventory?storeid=eq.\(encodedStore)&select=*") else {
             throw URLError(.badURL)
         }
 
@@ -794,14 +799,17 @@ class SupabaseDBService {
     /// Reads the current quantity for `productID` (= Product.id), then writes back
     /// `max(0, current - quantity)`. Called after a sale is finalized so database
     /// stock reflects what the client just bought.
-    func decrementStoreInventory(productID: String, by quantity: Int) async {
+    func decrementStoreInventory(productID: String, by quantity: Int, storeID: String? = nil) async {
         guard quantity > 0 else { return }
         // Use the anon key (RLS is disabled; anon has table grants — verified) so the
         // write never depends on a valid/unexpired user session token.
         let token = anonKey
 
-        // 1) Read the current inventory row for this product.
-        guard let getURL = URL(string: "\(baseURL)/StoreInventory?productid=eq.\(productID)&select=id,currentquantity") else {
+        // 1) Read the current inventory row for this product in the target store, so
+        //    the sale decrements the same store the stock was read from.
+        let targetStore = storeID ?? defaultStoreID
+        let encodedStore = targetStore.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? targetStore
+        guard let getURL = URL(string: "\(baseURL)/StoreInventory?productid=eq.\(productID)&storeid=eq.\(encodedStore)&select=id,currentquantity") else {
             return
         }
         var getRequest = URLRequest(url: getURL)

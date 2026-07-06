@@ -133,8 +133,10 @@ struct SalesAssociateRootView: View {
                 await syncProfilesWithSupabase()
                 await loadAppointments()
                 await loadSalesAndGoal()
-                await loadProductsFromDB()
+                // Resolve the active store first so product stock is fetched for the
+                // correct store (not summed across every store's inventory).
                 await loadActiveStoreID()
+                await loadProductsFromDB()
             }
         }
     }
@@ -348,15 +350,16 @@ struct SalesAssociateRootView: View {
             print("Supabase Sync: Fetched \(dbProducts.count) products from DB.")
 
             // On-hand stock is sourced from StoreInventory.currentquantity, keyed
-            // by productid (= Product.id). Summed across rows in case a product
-            // spans more than one inventory row.
+            // by productid (= Product.id), for the associate's active store only.
+            // Falls back to the app's boutique when the store hasn't resolved yet.
+            let filterStoreID = activeStoreID == "mock-store" ? nil : activeStoreID
             var inventoryByProductID: [String: Int] = [:]
             do {
-                let inventory = try await SupabaseDBService.shared.fetchStoreInventory()
+                let inventory = try await SupabaseDBService.shared.fetchStoreInventory(storeID: filterStoreID)
                 for row in inventory {
                     inventoryByProductID[row.productid, default: 0] += row.currentquantity
                 }
-                print("Supabase Sync: Fetched \(inventory.count) StoreInventory rows.")
+                print("Supabase Sync: Fetched \(inventory.count) StoreInventory rows for store \(filterStoreID ?? "default").")
             } catch {
                 print("Supabase Sync: StoreInventory fetch failed, falling back to Product.current_stock: \(error)")
             }
@@ -672,10 +675,11 @@ struct TodayDashboardView: View {
         // Amount actually collected (paise → rupees); fall back to the order total.
         let amountPaidRupees = payment.map { Double($0.paidPaise) / 100.0 } ?? totalRupees
 
+        let decrementStoreID = activeStoreID == "mock-store" ? nil : activeStoreID
         Task {
             for item in order.lineItems {
                 if let dbID = productsByID[item.id]?.dbID, !dbID.isEmpty {
-                    await SupabaseDBService.shared.decrementStoreInventory(productID: dbID, by: item.quantity)
+                    await SupabaseDBService.shared.decrementStoreInventory(productID: dbID, by: item.quantity, storeID: decrementStoreID)
                 }
             }
             // Skip Sales / receipt recording for mock associates without a real DB uuid.
