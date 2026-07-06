@@ -189,8 +189,9 @@ struct SellContent: View {
     /// (cart items are folded in, de-duplicated), then closes the session and returns to Today.
     private func commitSessionToClient() {
         guard let client = session.createdClient else { return }
-        let mergedWishlist = session.combinedWishlistProductIDs
-        let updatedClient = client.updatingWishlist(mergedWishlist)
+        // Save the actual wishlist (not wishlist+cart) so it stays consistent with
+        // the realtime persistence — items moved to the cart are not re-added.
+        let updatedClient = client.updatingWishlist(session.wishlistProductIDs)
         onCreateProfile(updatedClient)
         onDiscardClient()
     }
@@ -251,6 +252,12 @@ struct SellContent: View {
                                 selectedProduct = nil
                             }
                         },
+                        onRemoveProduct: { product in
+                            session.removeFromWishlist(product)
+                            if selectedProduct?.id == product.id {
+                                selectedProduct = nil
+                            }
+                        },
                         onPrimaryAction: {
                             session.moveWishlistToCart()
                             selectedProduct = nil
@@ -275,6 +282,12 @@ struct SellContent: View {
                         },
                         onDecrementQuantity: { product in
                             session.decrementCartQuantity(for: product)
+                        },
+                        onRemoveProduct: { product in
+                            session.removeFromCart(product)
+                            if selectedProduct?.id == product.id {
+                                selectedProduct = nil
+                            }
                         },
                         onPrimaryAction: {
                             selectedProduct = nil
@@ -415,12 +428,14 @@ struct SellContent: View {
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
-        // Persist wishlist/cart changes for an existing client straight to
-        // client_profiles (by product id) as items are added or removed — not only
-        // when the session is committed.
-        .onChange(of: session.combinedWishlistProductIDs) { _, newProductIDs in
+        // Persist the client's wishlist to client_profiles in realtime as items are
+        // added, removed, or moved to cart — not only on commit. Uses the actual
+        // wishlist (not wishlist+cart), so moving an item to the cart removes it
+        // from the saved wishlist too.
+        .onChange(of: session.wishlistProductIDs) { _, newProductIDs in
             guard let client = session.createdClient else { return }
             let updatedClient = client.updatingWishlist(newProductIDs)
+            session.createdClient = updatedClient   // keep local client in sync
             Task {
                 do {
                     try await SupabaseDBService.shared.upsertProfile(updatedClient)
@@ -448,6 +463,7 @@ struct SellContent: View {
         onIncrementQuantity: ((SalesProduct) -> Void)? = nil,
         onDecrementQuantity: ((SalesProduct) -> Void)? = nil,
         onMoveProductToCart: ((SalesProduct) -> Void)? = nil,
+        onRemoveProduct: ((SalesProduct) -> Void)? = nil,
         onPrimaryAction: @escaping () -> Void
     ) -> some View {
         HStack(alignment: .top, spacing: 18) {
@@ -465,6 +481,7 @@ struct SellContent: View {
                 onIncrementQuantity: onIncrementQuantity,
                 onDecrementQuantity: onDecrementQuantity,
                 onMoveProductToCart: onMoveProductToCart,
+                onRemoveProduct: onRemoveProduct,
                 onSelectProduct: { product in
                     selectedProduct = product
                 },
@@ -1844,6 +1861,7 @@ private struct SellingCollectionPanel: View {
     let onIncrementQuantity: ((SalesProduct) -> Void)?
     let onDecrementQuantity: ((SalesProduct) -> Void)?
     let onMoveProductToCart: ((SalesProduct) -> Void)?
+    let onRemoveProduct: ((SalesProduct) -> Void)?
     let onSelectProduct: (SalesProduct) -> Void
     let onBack: () -> Void
     let onDiscardClient: () -> Void
@@ -1900,6 +1918,9 @@ private struct SellingCollectionPanel: View {
                                     { action(product) }
                                 },
                                 onMoveToCart: onMoveProductToCart.map { action in
+                                    { action(product) }
+                                },
+                                onRemove: onRemoveProduct.map { action in
                                     { action(product) }
                                 }
                             )
@@ -1979,6 +2000,7 @@ private struct SellingCollectionRow: View {
     let onIncrementQuantity: (() -> Void)?
     let onDecrementQuantity: (() -> Void)?
     let onMoveToCart: (() -> Void)?
+    let onRemove: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 14) {
@@ -2026,6 +2048,19 @@ private struct SellingCollectionRow: View {
                     .controlSize(.small)
                     .tint(Theme.gold)
                 }
+            }
+
+            if let onRemove {
+                Button(action: onRemove) {
+                    Image(systemName: "xmark")
+                        .font(.subheadline.weight(.black))
+                        .foregroundStyle(Theme.muted)
+                        .frame(width: 34, height: 34)
+                        .background(.white.opacity(0.85), in: Circle())
+                        .overlay(Circle().stroke(Theme.line.opacity(0.5), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Remove \(product.name)")
             }
         }
         .padding(14)

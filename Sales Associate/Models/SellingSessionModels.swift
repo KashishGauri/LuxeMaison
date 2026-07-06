@@ -127,6 +127,18 @@ struct SellingSessionState: Equatable {
         wishlistProductIDs.removeAll { $0 == product.id }
     }
 
+    /// Removes a product from the cart entirely (local only — the cart is not
+    /// persisted to Supabase; only the wishlist is).
+    mutating func removeFromCart(_ product: SalesProduct) {
+        cartProductIDs.removeAll { $0 == product.id }
+        cartQuantitiesByProductID[product.id] = nil
+    }
+
+    /// Removes a product from the wishlist (used by the wishlist item's remove button).
+    mutating func removeFromWishlist(_ product: SalesProduct) {
+        wishlistProductIDs.removeAll { $0 == product.id }
+    }
+
     func isWishlisted(_ product: SalesProduct) -> Bool {
         wishlistProductIDs.contains(product.id)
     }
